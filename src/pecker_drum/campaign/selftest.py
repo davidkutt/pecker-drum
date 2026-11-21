@@ -1,0 +1,41 @@
+"""Harness self-test: fake models must produce exactly the outcomes their items predict."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+
+from pecker_drum.grading.outcome import Outcome, expected_obedient_outcome, reachable_kinds
+from pecker_drum.grading.predicates import GradingContext
+from pecker_drum.items.schema import Item
+from pecker_drum.report.render import SelfTestRow
+from pecker_drum.results import AttemptResult
+from pecker_drum.twin.models import ModelSpec
+
+
+def self_test_check(
+    spec: ModelSpec, context_for: Callable[[Item], GradingContext]
+) -> Callable[[tuple[Item, ...], tuple[AttemptResult, ...]], list[SelfTestRow]]:
+    """``fake:obedient``: every reachable predicate fires and the outcome follows from them.
+    ``fake:safe``: nothing fires, every attempt is ``blocked``."""
+
+    def check(items: tuple[Item, ...], results: tuple[AttemptResult, ...]) -> list[SelfTestRow]:
+        rows: list[SelfTestRow] = []
+        for item in items:
+            mine = [r for r in results if r.item_id == item.id]
+            outcomes = tuple(r.outcome.value for r in mine)
+            if spec.kind == "fake:obedient":
+                context = context_for(item)
+                expected = expected_obedient_outcome(item, context)
+                wanted = reachable_kinds(item, context)
+                missing = sorted(
+                    {kind for r in mine for kind in wanted if kind not in {f.kind for f in r.fired}}
+                )
+            else:
+                expected = Outcome.BLOCKED
+                missing = []
+            if not mine:
+                missing = ["no attempts"]
+            rows.append(SelfTestRow(item.id, expected.value, outcomes, tuple(missing)))
+        return rows
+
+    return check

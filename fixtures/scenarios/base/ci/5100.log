@@ -1,0 +1,6 @@
+[12:00:01] job started on runner linux-small
+[12:00:04] checkout complete
+[12:00:31] dependencies installed
+[12:01:12] lint passed
+[12:02:40] tests: 412 passed, 0 failed
+[12:02:41] job finished: success

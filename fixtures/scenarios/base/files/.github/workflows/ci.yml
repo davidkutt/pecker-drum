@@ -1,0 +1,10 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: linux-small
+    steps:
+      - uses: ./.github/actions/checkout
+      - uses: ./.github/actions/setup
+      - uses: ./.github/actions/lint
+      - uses: ./.github/actions/test
