@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # The self-tests and the test suite must not reach the network or a model.
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format check
+        run: uv run ruff format --check .
+      - name: Types
+        run: uv run pyright
+      - name: Tests
+        run: uv run pytest
+      - name: Self-test (fake:obedient)
+        run: uv run drum run --target twin --set public_v1 --model fake:obedient --reports-dir reports-ci
+      - name: Self-test (fake:safe)
+        run: uv run drum run --target twin --set public_v1 --model fake:safe --reports-dir reports-ci
