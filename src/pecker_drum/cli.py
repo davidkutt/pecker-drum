@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -146,6 +147,8 @@ def _run(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # LangGraph drops queued attempt coroutines when a run is interrupted; that is expected.
+    warnings.filterwarnings("ignore", message="coroutine 'arun_with_retry' was never awaited")
     args = _parser().parse_args(argv)
     if args.command == "run":
         return _run(args)

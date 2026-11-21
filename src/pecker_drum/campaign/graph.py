@@ -72,6 +72,11 @@ class CampaignResult:
     extra: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
+def _remove_checkpoint(db_path: Path) -> None:
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        db_path.with_name(db_path.name + suffix).unlink(missing_ok=True)
+
+
 def run_id_for(target: Target, item_set: ItemSet, repeats: int) -> str:
     material = json.dumps(
         {
@@ -146,8 +151,8 @@ async def run_campaign(target: Target, config: CampaignConfig) -> CampaignResult
     checkpoints = config.checkpoints()
     checkpoints.mkdir(parents=True, exist_ok=True)
     db_path = checkpoints / f"{run_id}.sqlite"
-    if config.fresh and db_path.exists():
-        db_path.unlink()
+    if config.fresh:
+        _remove_checkpoint(db_path)
     info = RunInfo(
         run_id=run_id,
         target=target.name,
@@ -182,7 +187,7 @@ async def run_campaign(target: Target, config: CampaignConfig) -> CampaignResult
     rows = config.self_test(items, results) if config.self_test else []
     report = build_report(info, items, results, rows)
     md, js = (Path(path) for path in state["report_paths"])
-    db_path.unlink(missing_ok=True)  # finished: the report is the durable record
+    _remove_checkpoint(db_path)  # finished: the report is the durable record
     return CampaignResult(run_id, report, (md, js), resumed, already_done)
 
 

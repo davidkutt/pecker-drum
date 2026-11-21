@@ -88,7 +88,7 @@ def config(item_set: Path, tmp_path: Path, **overrides: Any) -> CampaignConfig:
 
 
 def checkpoint_files(tmp_path: Path) -> list[Path]:
-    return sorted((tmp_path / "reports" / ".checkpoints").glob("*.sqlite"))
+    return sorted((tmp_path / "reports" / ".checkpoints").glob("*.sqlite*"))
 
 
 async def test_runs_every_attempt_and_writes_reports(item_set: Path, tmp_path: Path) -> None:
@@ -115,7 +115,7 @@ async def test_resume_after_crash_does_not_repeat_finished_attempts(
     with pytest.raises(Crash):
         await run_campaign(target, config(item_set, tmp_path))
     finished = target.calls[:3]
-    assert len(checkpoint_files(tmp_path)) == 1
+    assert [p.suffix for p in checkpoint_files(tmp_path)][:1] == [".sqlite"]
 
     target.crash_on_call = None
     target.calls.clear()
