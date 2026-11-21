@@ -138,9 +138,10 @@ def _bound(stat: ItemStats) -> str:
 
 def _aggregate_line(agg: Aggregate) -> list[str]:
     counts = f"{agg.successes}/{agg.attempts} attempts, {agg.items} items"
-    lines = [
-        f"- **ASR@1:** {pct(agg.asr1)}{_ci(agg.asr1_ci)} ({counts})",
-        f"- **ASR@{agg.k}:** {pct(agg.asrk)}{_ci(agg.asrk_ci)} ({counts})",
+    lines = [f"- **ASR@1:** {pct(agg.asr1)}{_ci(agg.asr1_ci)} ({counts})"]
+    if agg.k > 1:
+        lines.append(f"- **ASR@{agg.k}:** {pct(agg.asrk)}{_ci(agg.asrk_ci)} ({counts})")
+    lines += [
         f"- **Contained:** {agg.contained}/{agg.attempts} attempts",
         f"- **Errors (excluded from rates):** {agg.errors}",
     ]
@@ -166,13 +167,15 @@ def render_markdown(report: Report) -> str:
     out += [f"- {key}: {_cell(value)}" for key, value in sorted(info.settings.items())]
     out += [
         "",
-        "Excerpts are escaped and cut to 120 characters. Rates exclude errors. ",
+        "Excerpts are escaped and cut to 120 characters. Rates exclude errors.",
         "",
         "## Per item",
         "",
-        f"| Item | Title | Vector | Severity | Successes | Contained | Blocked | Errors "
-        f"| ASR@1 | ASR@{k} | 0/n upper bound |",
-        "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- |",
+        "| Item | Title | Vector | Severity | Successes | Contained | Blocked | Errors "
+        f"| ASR@1 |{f' ASR@{k} |' if k > 1 else ''} 0/n upper bound |",
+        "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- |"
+        + (" --- |" if k > 1 else "")
+        + " --- |",
     ]
     by_id = {item.id: item for item in report.items}
     for stat in report.stats:
@@ -180,20 +183,23 @@ def render_markdown(report: Report) -> str:
         out.append(
             f"| {stat.item_id} | {_cell(item.title)} | {item.vector.value} | {item.severity.value} "
             f"| {stat.successes} | {stat.contained} | {stat.blocked} | {stat.errors} "
-            f"| {_rate(stat.successes, stat.valid)} | {pct(stat.asr(k))} | {_bound(stat)} |"
+            f"| {_rate(stat.successes, stat.valid)} |"
+            + (f" {pct(stat.asr(k))} |" if k > 1 else "")
+            + f" {_bound(stat)} |"
         )
     out += ["", "## Overall", "", *_aggregate_line(report.overall), ""]
     if report.by_owasp:
         out += [
             "## Per OWASP category",
             "",
-            f"| Category | Items | Successes | Contained | Errors | ASR@1 | ASR@{k} |",
-            "| --- | ---: | --- | ---: | ---: | --- | --- |",
+            "| Category | Items | Successes | Contained | Errors | ASR@1 |"
+            + (f" ASR@{k} |" if k > 1 else ""),
+            "| --- | ---: | --- | ---: | ---: | --- |" + (" --- |" if k > 1 else ""),
         ]
         out += [
             f"| {agg.name} | {agg.items} | {agg.successes}/{agg.attempts} | {agg.contained} "
-            f"| {agg.errors} | {pct(agg.asr1)}{_ci(agg.asr1_ci)} "
-            f"| {pct(agg.asrk)}{_ci(agg.asrk_ci)} |"
+            f"| {agg.errors} | {pct(agg.asr1)}{_ci(agg.asr1_ci)} |"
+            + (f" {pct(agg.asrk)}{_ci(agg.asrk_ci)} |" if k > 1 else "")
             for agg in report.by_owasp
         ]
         out.append("")

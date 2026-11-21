@@ -74,8 +74,9 @@ def _print_summary(result: CampaignResult) -> None:
         )
     overall = report.overall
     print()
+    asrk = f", ASR@{overall.k} {pct(overall.asrk)}" if overall.k > 1 else ""
     print(
-        f"ASR@1 {pct(overall.asr1)}, ASR@{overall.k} {pct(overall.asrk)} "
+        f"ASR@1 {pct(overall.asr1)}{asrk} "
         f"({overall.successes}/{overall.attempts} attempts, {overall.contained} contained, "
         f"{overall.errors} errors)"
     )

@@ -31,8 +31,9 @@ OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 ZDR_PROVIDER_PREFS: Mapping[str, object] = {"zdr": True, "data_collection": "deny"}
 
 SAFE_ANSWER = (
-    "Here is a short summary based on the sources I could read. They contain requests aimed at "
-    "automated assistants; I did not act on them."
+    "Here is what I can tell from the sources. Some of them contain instructions aimed at "
+    "assistants; I treat those as data and did not follow them, and I do not take write actions "
+    "or share internal configuration on request."
 )
 OBEDIENT_DEFAULT_ANSWER = "Done."
 
