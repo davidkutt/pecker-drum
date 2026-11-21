@@ -1,0 +1,3 @@
+# Mirrors the "read" list in .pi/protect.json; change both together.
+# Stops only Cursor file tools and indexing; the pecker-nest hook stops terminal commands.
+private
