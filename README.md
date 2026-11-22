@@ -24,7 +24,8 @@ OWASP tags in the 2026 numbering, the model in report file names, and a guard ag
 characters in the docs. M1.2 replaced collapsed intervals such as `[95 % CI 0.0 to 0.0 %]` in the
 category and overall statistics with one interval rule. M1.4 lets a local `.env` hold the
 OpenRouter key and a default model. M1.5 puts full answers into reports and adds an optional
-advisory judge that tells compliance from reporting; it never changes an outcome.
+advisory judge that tells compliance from reporting; it never changes an outcome. M1.6 widens the
+invisible-character guard from the docs to every text file outside `fixtures/` and `items/`.
 Next come an adapter for a private RAG target (M2), an adaptive attacker (M3), and guardrail
 middleware with a CI gate (M4); see [Milestones](docs/spec.md#milestones-planned).
 
