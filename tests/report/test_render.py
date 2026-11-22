@@ -217,6 +217,16 @@ def test_estimate_formats_each_method() -> None:
     assert estimate(None, None, None, 0, 0) == "n/a"
 
 
+def test_interval_ends_round_outward_and_the_rate_to_nearest() -> None:
+    # Wilson for 2/5: 11.76 % to 76.93 %; nearest rounding would read 11.8 to 76.9.
+    assert estimate(0.4, Interval(0.11762, 0.76928), "wilson", 2, 5) == (
+        "40.0 % [95 % CI 11.7 to 77.0 %, Wilson]"
+    )
+    assert estimate(0.5678, Interval(0.3349, 0.8001), "bootstrap", 9, 15) == (
+        "56.8 % [95 % CI 33.4 to 80.1 %]"
+    )
+
+
 def test_markdown_marks_wilson_and_puts_a_legend_under_each_group_table() -> None:
     text = render_markdown(build_report(INFO, ITEMS, RESULTS))
     overall = text[text.index("## Overall") : text.index("## Per OWASP category")]

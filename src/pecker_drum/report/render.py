@@ -123,18 +123,20 @@ def pct(value: float | None) -> str:
 
 
 def pct_up(value: float) -> str:
-    """An upper bound in percent, rounded up to 0.1 % (outward, ADR 0006)."""
+    """An upper bound or interval end in percent, rounded up to 0.1 % (outward, ADR 0006)."""
     return f"{math.ceil(value * 1000 - _STEP_TOLERANCE) / 10:.1f} %"
 
 
 def pct_down(value: float) -> str:
-    """A lower bound in percent, rounded down to 0.1 % (outward, ADR 0006)."""
+    """A lower bound or interval end in percent, rounded down to 0.1 % (outward, ADR 0006)."""
     return f"{math.floor(value * 1000 + _STEP_TOLERANCE) / 10:.1f} %"
 
 
 def _ci(interval: Interval, label: str = "") -> str:
+    """A two-sided interval, its ends rounded outward like every bound."""
     suffix = f", {label}" if label else ""
-    return f" [95 % CI {interval.low * 100:.1f} to {interval.high * 100:.1f} %{suffix}]"
+    low, high = pct_down(interval.low).removesuffix(" %"), pct_up(interval.high)
+    return f" [95 % CI {low} to {high}{suffix}]"
 
 
 def estimate(
@@ -161,10 +163,10 @@ def estimate(
 def legend(k: int) -> str:
     """The line under every group table: which method and what it assumes."""
     text = (
-        "_0/n shows the one-sided 95 % upper bound, n/n the one-sided 95 % lower bound (both"
-        " rounded outward); otherwise the 95 % interval is a bootstrap clustered by item (5 or more"
-        " items) or Wilson (fewer). The bounds and Wilson treat attempts as independent, while"
-        " repeats of one item are correlated."
+        "_0/n shows the one-sided 95 % upper bound, n/n the one-sided 95 % lower bound; otherwise"
+        " the 95 % interval is a bootstrap clustered by item (5 or more items) or Wilson (fewer)."
+        " Every bound and interval end is rounded outward. The bounds and Wilson treat attempts as"
+        " independent, while repeats of one item are correlated."
     )
     if k > 1:
         text += (

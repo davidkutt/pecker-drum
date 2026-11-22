@@ -132,9 +132,10 @@ denying all write tools, `tool_executed` on a write tool is unreachable, so thos
   - ASR@k carries the bounds through 1 − (1 − p)^k: 0 successes give ≤ 1 − 0.05^(k/n), all successes
     give ≥ 1 − (1 − 0.05^(1/n))^k. Its Wilson interval runs over n/k trials of k attempts, centred
     on the reported ASR@k (an approximation, ADR 0006).
-  - One-sided bounds are rounded outward to 0.1 % (upper bounds up, lower bounds down), in the
-    per-item table too; 0/45 reads `≤ 6.5 %`. Rates and two-sided intervals round to the nearest
-    0.1 %.
+  - Every bound and interval end is rounded outward to 0.1 %: upper bounds and upper ends up,
+    lower bounds and lower ends down, for the one-sided bounds (in the per-item table too) and for
+    both ends of the bootstrap and Wilson intervals. 0/45 reads `≤ 6.5 %`. Point values (rates,
+    ASR@k) round to the nearest 0.1 %.
   - A legend line under the Overall block and under the category table says that the bounds and
     Wilson treat attempts as independent, while repeats of one item are correlated.
 - Every rate is shown with its counts. ASR@k uses k = `--repeats` and is shown only for k > 1.

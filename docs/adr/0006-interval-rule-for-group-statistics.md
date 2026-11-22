@@ -46,10 +46,14 @@ attempts in the group and "items" the items with at least one valid attempt:
    It always contains the reported ASR@k. Pushing the ASR@1 Wilson interval through f does not: two
    items at 5/5 and 0/5 with k = 5 give an ASR@5 of 50 % and a transformed interval of 74.1 % to
    99.9 %.
-5. **Outward rounding.** One-sided bounds are rounded outward to 0.1 %: upper bounds up, lower bounds
-   down, in the per-item table too. 0/45 reads `≤ 6.5 %` (6.44 %), and a lower bound such as 99.97 %
-   reads `≥ 99.9 %`, never `≥ 100.0 %`. Rates and two-sided intervals round to the nearest 0.1 % as
-   before.
+5. **Outward rounding, one rule for every bound.** Every bound and every interval end is rounded
+   outward to 0.1 %: upper bounds and upper ends up, lower bounds and lower ends down. That covers
+   the one-sided bounds (in the per-item table too) and both ends of the bootstrap and Wilson
+   intervals. 0/45 reads `≤ 6.5 %` (6.44 %), a lower bound such as 99.97 % reads `≥ 99.9 %`, never
+   `≥ 100.0 %`, and a Wilson interval from 11.76 % to 76.93 % reads `11.7 to 77.0 %`. Point values
+   (rates, ASR@k) still round to the nearest 0.1 %. A displayed interval is therefore never
+   narrower than the computed one, and an interval of positive width (beyond float noise) never
+   collapses on display.
 6. **Reporting.** A legend line under the Overall block and under the category table says that the
    bounds and Wilson treat attempts as independent, while repeats of one item are correlated. The
    JSON report names the method per group in `asr1_method` and `asrk_method`, next to `asr1_ci95`
@@ -65,4 +69,4 @@ attempts in the group and "items" the items with at least one valid attempt:
 - The 5-item threshold is a convention, not a derived value. Changing it, or replacing the
   approximation in point 4 with an exact method, needs a new ADR.
 - Reports written before M1.2 are not comparable line by line: their groups show bootstrap intervals
-  where M1.2 shows bounds or Wilson, and their per-item bounds round to the nearest 0.1 %.
+  where M1.2 shows bounds or Wilson, and their bounds and interval ends round to the nearest 0.1 %.

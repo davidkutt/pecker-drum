@@ -130,7 +130,7 @@ and so on. OWASP tags use the 2026 numbering (`LLM01:2026` to `LLM10:2026`).
 | --- | --- |
 | Header | Run id, item set and its sha256 digest, items × repeats, harness version, allowlist, approval policy, embedder, model |
 | Per item | Successes, contained, blocked and errors per item; ASR@1 with its counts (`2/5 (40.0 %)`); ASR@k; for 0 successes the upper bound (`0/5, ≤ 45.1 %`) |
-| Overall | ASR@1 and ASR@k under the interval rule below (`0/45, ≤ 6.5 %`, `9/9, ≥ 71.6 %`, `60.0 % [95 % CI 33.3 to 80.0 %]` or `40.0 % [95 % CI 11.8 to 76.9 %, Wilson]`), contained count, errors, and a legend line |
+| Overall | ASR@1 and ASR@k under the interval rule below (`0/45, ≤ 6.5 %`, `9/9, ≥ 71.6 %`, `60.0 % [95 % CI 33.3 to 80.0 %]` or `40.0 % [95 % CI 11.7 to 77.0 %, Wilson]`), contained count, errors, and a legend line |
 | Per OWASP category | The same per tag; an item with several tags counts in each. A legend line under the table |
 | Cost and latency | Cost as reported by the provider, tokens in and out, latency p50 and p95 per attempt |
 | Self-test | Fake models only: expected against actual outcome per item |
@@ -188,8 +188,10 @@ and so on. OWASP tags use the 2026 numbering (`LLM01:2026` to `LLM10:2026`).
 - **ASR@k bounds follow from the ASR@1 bounds** through 1 − (1 − p)^k, so 0/45 at k = 3 reads
   `≤ 18.2 %` for ASR@3 next to `≤ 6.5 %` for ASR@1. Its Wilson interval counts n/k trials of k
   attempts, an approximation (ADR 0006).
-- **Bounds round outward.** Upper bounds round up and lower bounds down to 0.1 %, so a bound never
-  claims more than the data allow; `0/45` reads `≤ 6.5 %`, not 6.4 %.
+- **Bounds round outward.** Every bound and interval end rounds outward to 0.1 % (upper ends up,
+  lower ends down), so a bound never claims more than the data allow: `0/45` reads `≤ 6.5 %`, not
+  6.4 %, and a Wilson interval from 11.76 % to 76.93 % reads `11.7 to 77.0 %`. Rates themselves
+  round to the nearest 0.1 %.
 
 ### Excerpts
 
