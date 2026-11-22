@@ -87,6 +87,7 @@ LangChain for the twin agent and model access, LlamaIndex for the twin's knowled
 - Commit identity: `davidkutt <52502283+davidkutt@users.noreply.github.com>`.
 - Tests next to what they cover (`tests/` mirrors `src/`). Update `docs/spec.md` in the same PR when
   behaviour changes.
+- No format or control characters (Unicode Cf/Cc such as U+200B) in docs, commit messages or code outside fixtures/ and items/; write them as escapes. A test checks tracked docs.
 
 ## Layout
 
