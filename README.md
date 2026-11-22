@@ -22,8 +22,8 @@ M1 is built: harness core, the twin, the `public_v1` item set (15 items) and rep
 tests and both self-tests pass in CI. M1.1 fixed what had to be right before the first live run:
 OWASP tags in the 2026 numbering, the model in report file names, and a guard against invisible
 characters in the docs. M1.2 replaced collapsed intervals such as `[95 % CI 0.0 to 0.0 %]` in the
-category and overall statistics with one interval rule. The first live run against an OpenRouter
-model is still open.
+category and overall statistics with one interval rule. M1.4 lets a local `.env` hold the
+OpenRouter key and a default model. The first live run against an OpenRouter model is still open.
 Next come an adapter for a private RAG target (M2), an adaptive attacker (M3), and guardrail
 middleware with a CI gate (M4); see [Milestones](docs/spec.md#milestones-planned).
 
@@ -69,8 +69,44 @@ the network off and use a deterministic hash embedder. The command exits with 1 
 
 ### Live run (OpenRouter, zero data retention)
 
-Read the key without echoing it, pick a model, run. Every request sends `provider.zdr = true` and
-`provider.data_collection = "deny"`, so OpenRouter only routes to endpoints with zero data retention.
+Every request sends `provider.zdr = true` and `provider.data_collection = "deny"`, so OpenRouter only
+routes to endpoints with zero data retention. A live run always needs `--model openrouter` or
+`--model openrouter:<model id>` on the command line: no environment variable or `.env` entry starts
+one on its own.
+
+#### With a `.env` file
+
+Create `.env` from the example and restrict it to your user before you put the key in. Identical in
+bash and fish:
+
+```bash
+cp -n .env.example .env
+chmod 600 .env
+```
+
+Open `.env` in your editor and fill in `OPENROUTER_API_KEY` and `DRUM_OPENROUTER_MODEL` (any
+OpenRouter model id, such as `vendor/model-name`). Then run with a bare `--model openrouter`. Identical
+in bash and fish:
+
+```bash
+uv run drum run --target twin --set public_v1 --model openrouter --repeats 5
+```
+
+`drum` prints which model it took from `DRUM_OPENROUTER_MODEL`. The rules
+([ADR 0007](docs/adr/0007-live-run-settings-from-env.md)):
+
+- `--model openrouter:<model id>` still works and wins over `DRUM_OPENROUTER_MODEL`. A bare
+  `--model openrouter` without the variable stops with exit code 2.
+- A non-empty value in the environment wins over `.env`; an empty one counts as unset.
+- `drum` opens `.env` (in the working directory) only for `--model openrouter` and
+  `--model openrouter:<model id>`, and reads only these two names. Fake-model self-tests never open
+  it. Other entries are skipped with a warning, and a `.env` that others can read gets a
+  `chmod 600` warning. No message shows a value.
+- `.env` is git-ignored; `.env.example` is tracked and stays empty.
+
+#### With the key in the shell
+
+Read the key without echoing it, pick a model, run.
 
 bash:
 
@@ -95,6 +131,7 @@ Face).
 
 | Option | Default | What it does |
 | --- | --- | --- |
+| `--model MODE` | (required) | `fake:obedient`, `fake:safe`, `openrouter:<model id>`, or `openrouter` for the id in `DRUM_OPENROUTER_MODEL` |
 | `--set NAME_OR_PATH` | (required) | Item set name in `items/` (`public_v1`) or a path to a `.jsonl` file |
 | `--repeats K` | `1` | Attempts per item; ASR@K is reported when K > 1 |
 | `--concurrency N` | `4` | Parallel attempts |
@@ -104,8 +141,8 @@ Face).
 | `--reports-dir DIR` | `reports` | Where reports and checkpoints go |
 | `--items-dir`, `--fixtures-dir` | `items`, `fixtures` | Where item sets and fixtures are read from |
 
-Exit codes: `0` done, `1` self-test failed, `2` usage error (unknown target, bad model, missing key),
-`130` interrupted.
+Exit codes: `0` done, `1` self-test failed, `2` usage error (unknown target, bad model, missing key
+or model id), `130` interrupted. Options can't be abbreviated: `--mod` is an error, not `--model`.
 
 ### Interrupted runs
 

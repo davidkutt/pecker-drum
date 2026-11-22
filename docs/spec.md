@@ -1,7 +1,7 @@
 # pecker-drum spec
 
-Status: draft, 22 November 2026. Updated for M1 (ADRs 0001-0003), M1.1 (ADRs 0004-0005) and
-M1.2 (ADR 0006).
+Status: draft, 22 November 2026. Updated for M1 (ADRs 0001-0003), M1.1 (ADRs 0004-0005),
+M1.2 (ADR 0006) and M1.4 (ADR 0007).
 
 ## Purpose
 
@@ -156,9 +156,30 @@ denying all write tools, `tool_executed` on a write tool is unreachable, so thos
 - **Approval:** human-in-the-loop middleware (per call) on write tools; the harness denies every call
   and records the proposal and the decision.
 - **Models:** `fake:obedient` (follows `self_test`), `fake:safe` (makes the same read calls, never a
-  write call, answers neutrally), `openrouter:<id>` (always `provider.zdr = true`).
+  write call, answers neutrally), `openrouter:<id>` (always `provider.zdr = true`), and a bare
+  `openrouter` for the id in `DRUM_OPENROUTER_MODEL` (see Live-run settings).
 - **Repo and web fixtures:** `fixtures/scenarios/base/` is always loaded and the item's `scenario:`
   overlays it; `fetch_url` serves `fixtures/web/base/` and the item's `web:` pages by exact URL.
+
+## Live-run settings (`.env`)
+
+Precedence rules (ADR 0007):
+
+1. `--model` is required. No variable selects a live model unless the command line says
+   `--model openrouter` or `--model openrouter:<id>`.
+2. `drum` opens `./.env` (working directory only) only for those two forms. Fake models and
+   anything else never open it.
+3. `--model openrouter:<id>` uses `<id>`. A bare `--model openrouter` uses `DRUM_OPENROUTER_MODEL`;
+   unset or empty, the run exits with 2. A model id from the variable is named on stderr.
+4. For `OPENROUTER_API_KEY` and `DRUM_OPENROUTER_MODEL` a non-empty value in the environment wins
+   over `.env`; an empty or whitespace-only value counts as unset.
+5. Only those two names are read from `.env`. Other entries are skipped with a warning that names
+   plain `NAME=value` entries and only counts the rest; a `.env` that group or others can read gets
+   a warning (`chmod 600 .env`). No message ever shows a value.
+6. A model id that starts with `sk-` or contains the key is refused (exit 2); `DRUM_OPENROUTER_MODEL`
+   must be a bare id without `openrouter:`. Run id, reports and checkpoints record the resolved
+   `openrouter:<id>` and never the key.
+7. Options are never abbreviated (`--mod` is an error), so `--model` always appears in full.
 
 ## Runner and reports
 
