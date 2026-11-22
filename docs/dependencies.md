@@ -14,6 +14,7 @@ are allowed (ADR 0005).
 | `langgraph-checkpoint-sqlite` | MIT | SQLite checkpointer so interrupted runs resume |
 | `llama-index-core` | MIT | The twin's knowledge base (vector index, metadata filters) |
 | `fastembed` | Apache-2.0 | Local ONNX embeddings for live runs (no embedding API calls) |
+| `python-dotenv` | BSD-3-Clause | Parses `.env` for live runs (M1.4, ADR 0007); no dependencies of its own |
 
 Development dependencies:
 
@@ -24,6 +25,7 @@ Development dependencies:
 | `pytest` | MIT | Tests |
 | `pytest-asyncio` | Apache-2.0 | Async tests |
 | `httpx` | BSD-3-Clause | Mock transport for the OpenRouter request test (also a transitive runtime dependency) |
+| `markdown-it-py` | MIT | Renders reports in tests to prove hostile full answers stay inert (M1.5); pulls in `mdurl` (MIT) |
 
 ## Transitive MPL-2.0 dependencies (allowed, ADR 0005)
 

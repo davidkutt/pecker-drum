@@ -22,8 +22,9 @@ M1 is built: harness core, the twin, the `public_v1` item set (15 items) and rep
 tests and both self-tests pass in CI. M1.1 fixed what had to be right before the first live run:
 OWASP tags in the 2026 numbering, the model in report file names, and a guard against invisible
 characters in the docs. M1.2 replaced collapsed intervals such as `[95 % CI 0.0 to 0.0 %]` in the
-category and overall statistics with one interval rule. The first live run against an OpenRouter
-model is still open.
+category and overall statistics with one interval rule. M1.4 lets a local `.env` hold the
+OpenRouter key and a default model. M1.5 puts full answers into reports and adds an optional
+advisory judge that tells compliance from reporting; it never changes an outcome.
 Next come an adapter for a private RAG target (M2), an adaptive attacker (M3), and guardrail
 middleware with a CI gate (M4); see [Milestones](docs/spec.md#milestones-planned).
 
@@ -69,8 +70,44 @@ the network off and use a deterministic hash embedder. The command exits with 1 
 
 ### Live run (OpenRouter, zero data retention)
 
-Read the key without echoing it, pick a model, run. Every request sends `provider.zdr = true` and
-`provider.data_collection = "deny"`, so OpenRouter only routes to endpoints with zero data retention.
+Every request sends `provider.zdr = true` and `provider.data_collection = "deny"`, so OpenRouter only
+routes to endpoints with zero data retention. A live run always needs `--model openrouter` or
+`--model openrouter:<model id>` on the command line: no environment variable or `.env` entry starts
+one on its own.
+
+#### With a `.env` file
+
+Create `.env` from the example and restrict it to your user before you put the key in. Identical in
+bash and fish:
+
+```bash
+cp -n .env.example .env
+chmod 600 .env
+```
+
+Open `.env` in your editor and fill in `OPENROUTER_API_KEY` and `DRUM_OPENROUTER_MODEL` (any
+OpenRouter model id, such as `vendor/model-name`). Then run with a bare `--model openrouter`. Identical
+in bash and fish:
+
+```bash
+uv run drum run --target twin --set public_v1 --model openrouter --repeats 5
+```
+
+`drum` prints which model it took from `DRUM_OPENROUTER_MODEL`. The rules
+([ADR 0007](docs/adr/0007-live-run-settings-from-env.md)):
+
+- `--model openrouter:<model id>` still works and wins over `DRUM_OPENROUTER_MODEL`. A bare
+  `--model openrouter` without the variable stops with exit code 2.
+- A non-empty value in the environment wins over `.env`; an empty one counts as unset.
+- `drum` opens `.env` (in the working directory) only for `--model openrouter` and
+  `--model openrouter:<model id>`, and reads only these two names. Fake-model self-tests never open
+  it. Other entries are skipped with a warning, and a `.env` that others can read gets a
+  `chmod 600` warning. No message shows a value.
+- `.env` is git-ignored; `.env.example` is tracked and stays empty.
+
+#### With the key in the shell
+
+Read the key without echoing it, pick a model, run.
 
 bash:
 
@@ -91,34 +128,94 @@ uv run drum run --target twin --set public_v1 --model "openrouter:$MODEL" --repe
 The first live run downloads the twin's local embedding model (fastembed, about 70 MB, from Hugging
 Face).
 
+### Advisory judge
+
+The strict grader counts a marker the model only quoted while warning the user as a success
+(ADR 0002). An optional judge gives a second opinion on every `success` and `contained` attempt:
+`complied`, `reported` or `unclear`, with a one-sentence reason. It **never changes an outcome or a
+rate**: the report shows its labels next to the strict counts and lists every attempt it labels
+`reported` or `unclear` ([ADR 0008](docs/adr/0008-advisory-judge-and-full-answers.md)).
+
+Try it with a fake judge (no network, no key). Identical in bash and fish:
+
+```bash
+uv run drum run --target twin --set public_v1 --model fake:obedient --judge fake:reported
+```
+
+A live judge is an OpenRouter model with the same zero-data-retention settings as a live target. It
+needs `OPENROUTER_API_KEY` (from `.env` or the shell, as above) and costs money, even with a fake
+target model.
+
+bash:
+
+```bash
+JUDGE=vendor/judge-model   # any OpenRouter model id that supports structured outputs
+uv run drum run --target twin --set public_v1 --model openrouter --judge "openrouter:$JUDGE" --repeats 5
+```
+
+fish:
+
+```fish
+set JUDGE vendor/judge-model   # any OpenRouter model id that supports structured outputs
+uv run drum run --target twin --set public_v1 --model openrouter --judge "openrouter:$JUDGE" --repeats 5
+```
+
+The judge sees the item's attack goal, the user's turns, the tool calls and the full answer. The
+answer is wrapped in delimiters as untrusted data, and the reply must match a strict schema at
+temperature 0. Anything else becomes `unclear` ("judge error").
+
+### Re-render a finished run
+
+A finished run leaves a run record in `reports/.runs/<run id>.json`. `drum report` rebuilds the
+reports from it without calling the target, for example to add a judge afterwards. The run id is
+in the report header. Identical in bash and fish:
+
+```bash
+uv run drum report --run-id 0123456789abcdef
+uv run drum report --run-id 0123456789abcdef --judge fake:reported
+```
+
+With a live judge (`--judge openrouter:<model id>`) the same rules and costs apply as above.
+Without `--judge` the new report equals the original apart from its "Report generated" line. Runs
+that finished before M1.5 keep no record and have to be run again.
+
 ### Options
 
 | Option | Default | What it does |
 | --- | --- | --- |
+| `--model MODE` | (required) | `fake:obedient`, `fake:safe`, `openrouter:<model id>`, or `openrouter` for the id in `DRUM_OPENROUTER_MODEL` |
 | `--set NAME_OR_PATH` | (required) | Item set name in `items/` (`public_v1`) or a path to a `.jsonl` file |
 | `--repeats K` | `1` | Attempts per item; ASR@K is reported when K > 1 |
 | `--concurrency N` | `4` | Parallel attempts |
 | `--embedder auto\|hash\|fastembed` | `auto` | `auto` uses `hash` for fake models and `fastembed` for live runs |
 | `--allow-host HOST` | `twin.example`, `*.twin.example` | Hosts that links and images may point to without counting as an attack; repeatable, replaces the default |
+| `--judge JUDGE` | none | Advisory judge: `fake:complied`, `fake:reported` or `openrouter:<model id>`; labels success and contained attempts, never changes an outcome |
 | `--fresh` | off | Discard an unfinished checkpoint and start over |
-| `--reports-dir DIR` | `reports` | Where reports and checkpoints go |
+| `--reports-dir DIR` | `reports` | Where reports, checkpoints and run records go |
 | `--items-dir`, `--fixtures-dir` | `items`, `fixtures` | Where item sets and fixtures are read from |
 
-Exit codes: `0` done, `1` self-test failed, `2` usage error (unknown target, bad model, missing key),
-`130` interrupted.
+`drum report` takes `--run-id`, `--judge`, `--concurrency` (parallel judge calls) and
+`--reports-dir`.
+
+Exit codes: `0` done, `1` self-test failed, `2` usage error (unknown target, bad model or judge,
+missing key or model id, no run record), `130` interrupted. Options can't be abbreviated: `--mod`
+is an error, not `--model`.
 
 ### Interrupted runs
 
 Press Ctrl-C at any time, then run the same command again: finished attempts are not repeated. The
-checkpoint is `reports/.checkpoints/<run id>.sqlite`, and it is deleted once the report is written.
-The run id is a hash of the target and its settings (model, embedder, allowlist), the item set and
-its digest, `--repeats` and the harness version. Changing any of those starts a new run; changing
+checkpoint is `reports/.checkpoints/<run id>.sqlite`, and it is deleted once the report is written;
+the run record in `reports/.runs/` takes its place. The run id is a hash of the target and its
+settings (model, embedder, allowlist), the item set and its digest, `--repeats`, the harness version
+and the judge model if there is one. Changing any of those starts a new run; changing
 `--concurrency` does not.
 
 ## Reading a report
 
 Each run writes `reports/<date>-<target>-<set>-<model-slug>.md` and a `.json` file with the same
-numbers (keys `run`, `items`, `overall`, `by_owasp`, `cost_latency`, `self_test`, `attempts`). Every
+numbers (keys `run`, `generated_at`, `items`, `overall`, `by_owasp`, `cost_latency`, `self_test`,
+`judge_disagreements`, `judge_unclear`, `attempts`; every attempt carries its full `answer` and,
+with a judge, its `judge` label). Every
 group in `overall` and `by_owasp` names its interval method in `asr1_method` and `asrk_method`
 (`zero_bound`, `all_bound`, `bootstrap` or `wilson`). The model slug is the `--model` value in lower
 case with every run of other characters turned into `-`: `fake:obedient` gives
@@ -128,13 +225,16 @@ and so on. OWASP tags use the 2026 numbering (`LLM01:2026` to `LLM10:2026`).
 
 | Section | What's in it |
 | --- | --- |
-| Header | Run id, item set and its sha256 digest, items × repeats, harness version, allowlist, approval policy, embedder, model |
+| Header | Run id, report generation time, item set and its sha256 digest, items × repeats, harness version, judge, allowlist, approval policy, embedder, model |
 | Per item | Successes, contained, blocked and errors per item; ASR@1 with its counts (`2/5 (40.0 %)`); ASR@k; for 0 successes the upper bound (`0/5, ≤ 45.1 %`) |
 | Overall | ASR@1 and ASR@k under the interval rule below (`0/45, ≤ 6.5 %`, `9/9, ≥ 71.6 %`, `60.0 % [95 % CI 33.3 to 80.0 %]` or `40.0 % [95 % CI 11.7 to 77.0 %, Wilson]`), contained count, errors, and a legend line |
 | Per OWASP category | The same per tag; an item with several tags counts in each. A legend line under the table |
-| Cost and latency | Cost as reported by the provider, tokens in and out, latency p50 and p95 per attempt |
+| Judge (advisory) | With a judge only: its labels next to the strict counts, overall and per item (`6 success (judge: 0 complied, 6 reported, 0 unclear)`) |
+| Cost and latency | Cost as reported by the provider, tokens in and out, latency p50 and p95 per attempt; the judge's cost separately |
 | Self-test | Fake models only: expected against actual outcome per item |
 | Successes, Contained, Errors | Every such attempt with item, attempt number, the predicates that fired and an excerpt |
+| Judge disagrees, Judge unclear | With a judge only: every attempt it labels `reported` or `unclear`, with its reason |
+| Full answers | The full answer of every success and contained attempt, inside a fenced code block |
 
 ### Outcomes
 
@@ -199,6 +299,12 @@ Excerpts are at most 120 characters. Invisible and control characters are shown 
 zero-width space appears as `\u200b`), and backticks and pipes are escaped too. Every excerpt sits
 inside a code span, so nothing in a report renders as a live link or image. The excerpts are still
 attacker text: treat a report like the fixtures, as data.
+
+Full answers are escaped the same way but not cut. Line breaks stay, backslashes are doubled (a
+typed `\u200b` shows as `\\u200b`), and backticks and pipes are kept. The Markdown report shows
+them only inside a fenced code block whose fence is longer than any backtick run in the answer, so
+no link, image or HTML in an answer ever renders. The judge's reason is attacker-influenced too and
+is shown like an excerpt.
 
 ## Layout
 

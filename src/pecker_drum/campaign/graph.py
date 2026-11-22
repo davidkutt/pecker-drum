@@ -21,9 +21,11 @@ from langgraph.graph.state import StateGraph  # pyright: ignore[reportMissingTyp
 from langgraph.types import Send
 
 from pecker_drum import __version__
+from pecker_drum.campaign.record import RunRecord, write_record
 from pecker_drum.grading.outcome import Outcome, grade
 from pecker_drum.items.loader import ItemSet, load_item_set
 from pecker_drum.items.schema import Item
+from pecker_drum.judge import Judge, judge_result
 from pecker_drum.observation import Observation
 from pecker_drum.report.render import Report, SelfTestRow, build_report, write_report
 from pecker_drum.results import AttemptResult, RunInfo
@@ -34,6 +36,8 @@ class RunState(TypedDict, total=False):
     items: list[dict[str, Any]]
     results: Annotated[list[dict[str, Any]], operator.add]
     report_paths: list[str]
+    info: dict[str, Any]
+    """The run info as written to the report (with ``finished_at``)."""
 
 
 class AttemptInput(TypedDict):
@@ -56,6 +60,8 @@ class CampaignConfig:
     """Ignore an unfinished checkpoint and start over."""
     today: date | None = None
     self_test: SelfTestCheck | None = None
+    judge: Judge | None = None
+    """Advisory judge for success and contained attempts (ADR 0008); never changes an outcome."""
 
     def checkpoints(self) -> Path:
         return self.checkpoint_dir or self.reports_dir / ".checkpoints"
@@ -77,33 +83,40 @@ def _remove_checkpoint(db_path: Path) -> None:
         db_path.with_name(db_path.name + suffix).unlink(missing_ok=True)
 
 
-def run_id_for(target: Target, item_set: ItemSet, repeats: int) -> str:
-    material = json.dumps(
-        {
-            "target": target.name,
-            "settings": target.describe(),
-            "set": item_set.name,
-            "digest": item_set.digest,
-            "repeats": repeats,
-            "version": __version__,
-        },
-        sort_keys=True,
-    )
+def run_id_for(target: Target, item_set: ItemSet, repeats: int, judge: str = "") -> str:
+    """A hash of everything that shapes the attempts. The judge counts only when set, so run ids
+    without a judge stay what they were before M1.5; with one, a resume keeps its labels."""
+    fields: dict[str, Any] = {
+        "target": target.name,
+        "settings": target.describe(),
+        "set": item_set.name,
+        "digest": item_set.digest,
+        "repeats": repeats,
+        "version": __version__,
+    }
+    if judge:
+        fields["judge"] = judge
+    material = json.dumps(fields, sort_keys=True)
     return hashlib.sha256(material.encode()).hexdigest()[:16]
 
 
-def _now() -> str:
+def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
-async def _attempt(target: Target, item: Item, attempt: int) -> AttemptResult:
+async def _attempt(
+    target: Target, item: Item, attempt: int, judge: Judge | None = None
+) -> AttemptResult:
     try:
         observation = await target.run(item, attempt)
     except Exception as exc:  # a target must not raise, but never lose the run over it
         observation = Observation(error=f"{type(exc).__name__}: {str(exc)[:300]}")
-    return AttemptResult.from_grade(
+    result = AttemptResult.from_grade(
         item.id, attempt, observation, grade(item, observation, target.grading_context(item))
     )
+    if judge is not None:  # after grading: the label can never feed back into the outcome
+        result = await judge_result(judge, item, result)
+    return result
 
 
 def build_graph(target: Target, config: CampaignConfig, info: RunInfo) -> Any:
@@ -122,17 +135,20 @@ def build_graph(target: Target, config: CampaignConfig, info: RunInfo) -> Any:
 
     async def attempt(payload: AttemptInput) -> dict[str, Any]:
         item = Item.model_validate(payload["item"])
-        result = await _attempt(target, item, payload["attempt"])
+        result = await _attempt(target, item, payload["attempt"], config.judge)
         return {"results": [result.model_dump(mode="json")]}
 
     async def report(state: RunState) -> dict[str, Any]:
         items = tuple(Item.model_validate(raw) for raw in state.get("items", []))
         results = tuple(AttemptResult.model_validate(raw) for raw in state.get("results", []))
         rows = config.self_test(items, results) if config.self_test else []
-        finished = info.model_copy(update={"finished_at": _now()})
-        built = build_report(finished, items, results, rows)
+        finished_at = utc_now()
+        finished = info.model_copy(update={"finished_at": finished_at})
+        built = build_report(finished, items, results, rows, generated_at=finished_at)
         md, js = write_report(built, config.reports_dir, config.today or date.today())
-        return {"report_paths": [str(md), str(js)]}
+        record = RunRecord(info=finished, items=items, results=built.results, self_test=tuple(rows))
+        write_record(record, config.reports_dir)
+        return {"report_paths": [str(md), str(js)], "info": finished.model_dump(mode="json")}
 
     builder: Any = StateGraph(RunState)
     builder.add_node("load", load)
@@ -147,7 +163,8 @@ def build_graph(target: Target, config: CampaignConfig, info: RunInfo) -> Any:
 
 async def run_campaign(target: Target, config: CampaignConfig) -> CampaignResult:
     item_set = load_item_set(config.set_path)
-    run_id = run_id_for(target, item_set, config.repeats)
+    judge_name = config.judge.name if config.judge else ""
+    run_id = run_id_for(target, item_set, config.repeats, judge_name)
     checkpoints = config.checkpoints()
     checkpoints.mkdir(parents=True, exist_ok=True)
     db_path = checkpoints / f"{run_id}.sqlite"
@@ -161,8 +178,9 @@ async def run_campaign(target: Target, config: CampaignConfig) -> CampaignResult
         model=target.describe().get("model", ""),
         repeats=config.repeats,
         settings=target.describe(),
-        started_at=_now(),
+        started_at=utc_now(),
         harness_version=__version__,
+        judge=judge_name,
     )
     run_config: dict[str, Any] = {
         "configurable": {"thread_id": run_id},
@@ -185,7 +203,8 @@ async def run_campaign(target: Target, config: CampaignConfig) -> CampaignResult
     items = tuple(Item.model_validate(raw) for raw in state.get("items", []))
     results = tuple(AttemptResult.model_validate(raw) for raw in state.get("results", []))
     rows = config.self_test(items, results) if config.self_test else []
-    report = build_report(info, items, results, rows)
+    finished = RunInfo.model_validate(state["info"]) if "info" in state else info
+    report = build_report(finished, items, results, rows, generated_at=finished.finished_at)
     md, js = (Path(path) for path in state["report_paths"])
     _remove_checkpoint(db_path)  # finished: the report is the durable record
     return CampaignResult(run_id, report, (md, js), resumed, already_done)

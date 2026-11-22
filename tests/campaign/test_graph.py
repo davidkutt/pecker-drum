@@ -169,3 +169,69 @@ async def test_target_exceptions_become_error_results(item_set: Path, tmp_path: 
     assert [(r.item_id, r.error) for r in errors] == [("t-002", "ValueError: target exploded")]
     assert result.report.overall.errors == 1
     assert result.report.overall.attempts == 2  # errors are excluded from rates
+
+
+# --- M1.5: advisory judge, run id and run record.
+
+
+async def test_judge_labels_successes_only_and_never_changes_outcomes(
+    item_set: Path, tmp_path: Path
+) -> None:
+    from pecker_drum.judge import FakeJudge
+    from pecker_drum.results import JudgeLabel
+
+    plain = await run_campaign(FakeTarget(), config(item_set, tmp_path))
+    judge = FakeJudge(JudgeLabel.REPORTED)
+    judged = await run_campaign(FakeTarget(), config(item_set, tmp_path, judge=judge))
+
+    def outcomes(results: Any) -> list[tuple[str, int, str]]:
+        return [(r.item_id, r.attempt, r.outcome.value) for r in results]
+
+    assert outcomes(plain.report.results) == outcomes(judged.report.results)
+    assert plain.report.stats == judged.report.stats
+    assert all(r.judge is None for r in plain.report.results)
+    labelled = [(r.item_id, r.attempt) for r in judged.report.results if r.judge is not None]
+    assert labelled == [("t-001", 1)]  # the only success; blocked attempts get no label
+    assert judged.report.info.judge == "fake:reported"
+    assert judged.run_id != plain.run_id
+
+
+def test_run_id_without_a_judge_is_what_it_was_before(item_set: Path) -> None:
+    import hashlib
+
+    from pecker_drum import __version__
+    from pecker_drum.campaign.graph import run_id_for
+    from pecker_drum.items.loader import load_item_set
+
+    loaded = load_item_set(item_set)
+    material = json.dumps(
+        {
+            "target": "fake",
+            "settings": {"model": "fake:test"},
+            "set": loaded.name,
+            "digest": loaded.digest,
+            "repeats": 2,
+            "version": __version__,
+        },
+        sort_keys=True,
+    )
+    before = hashlib.sha256(material.encode()).hexdigest()[:16]
+    assert run_id_for(FakeTarget(), loaded, 2) == before
+    with_judge = run_id_for(FakeTarget(), loaded, 2, "fake:reported")
+    assert with_judge != before
+    assert with_judge != run_id_for(FakeTarget(), loaded, 2, "fake:complied")
+
+
+async def test_a_finished_run_leaves_a_run_record(item_set: Path, tmp_path: Path) -> None:
+    from pecker_drum.campaign.record import read_record
+
+    result = await run_campaign(FakeTarget(), config(item_set, tmp_path))
+    record = read_record(tmp_path / "reports", result.run_id)
+    assert record.info.run_id == result.run_id
+    assert record.info.finished_at
+    assert record.info == result.report.info
+    assert record.results == result.report.results
+    assert [item.id for item in record.items] == ["t-001", "t-002", "t-003"]
+    assert record.missing_answers == 0
+    assert {r.answer for r in record.results} == {f"answer {CANARY}", "no leak"}
+    assert checkpoint_files(tmp_path) == []

@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
+OPENROUTER_MODEL_ENV = "DRUM_OPENROUTER_MODEL"
+"""Model id for a bare ``--model openrouter`` (M1.4). Never selects a live model on its own."""
 ZDR_PROVIDER_PREFS: Mapping[str, object] = {"zdr": True, "data_collection": "deny"}
 
 SAFE_ANSWER = (
@@ -65,8 +67,46 @@ def parse_model_spec(value: str) -> ModelSpec:
     prefix, _, model_id = value.partition(":")
     if prefix == "openrouter" and model_id.strip():
         return ModelSpec("openrouter", model_id.strip())
-    msg = f"unknown model {value!r}: use fake:obedient, fake:safe or openrouter:<model id>"
+    msg = (
+        f"unknown model {value!r}: use fake:obedient, fake:safe, openrouter:<model id> "
+        f"or openrouter (model id from {OPENROUTER_MODEL_ENV})"
+    )
     raise ModelSpecError(msg)
+
+
+def asks_for_openrouter(value: str) -> bool:
+    """``--model openrouter`` or ``openrouter:<...>``: the command line asks for a live run."""
+    return value == "openrouter" or value.startswith("openrouter:")
+
+
+def openrouter_spec_from_env(environ: Mapping[str, str]) -> ModelSpec:
+    """The live model for a bare ``--model openrouter``: ``DRUM_OPENROUTER_MODEL``."""
+    model_id = environ.get(OPENROUTER_MODEL_ENV, "").strip()
+    if not model_id:
+        msg = (
+            f"--model openrouter needs a model id: set {OPENROUTER_MODEL_ENV} in .env or the "
+            "environment, or pass --model openrouter:<model id>"
+        )
+        raise ModelSpecError(msg)
+    if model_id.startswith("openrouter:") or not model_id.isprintable() or " " in model_id:
+        # The value is not echoed: it might be something pasted into the wrong line.
+        msg = f"{OPENROUTER_MODEL_ENV} must be a bare OpenRouter model id such as vendor/model-name"
+        raise ModelSpecError(msg)
+    return ModelSpec("openrouter", model_id)
+
+
+def refuse_key_as_model_id(spec: ModelSpec, environ: Mapping[str, str]) -> None:
+    """A model id goes into the run id, reports and file names, so it must never be the key."""
+    if spec.kind != "openrouter":
+        return
+    key = environ.get(OPENROUTER_KEY_ENV, "").strip()
+    # Containment only for key-length values: a placeholder such as "x" must not refuse every id.
+    if spec.model_id.startswith("sk-") or (len(key) >= 8 and key in spec.model_id):
+        msg = (
+            f"the model id looks like an API key (it starts with sk- or contains "
+            f"{OPENROUTER_KEY_ENV}); check {OPENROUTER_MODEL_ENV} and --model"
+        )
+        raise ModelSpecError(msg)
 
 
 def _approx_tokens(text: str) -> int:
@@ -154,11 +194,20 @@ def openrouter_model(
     api_key: str | None = None,
     http_async_client: httpx.AsyncClient | None = None,
     timeout_s: float = 120.0,
+    temperature: float | None = None,
+    provider_extra: Mapping[str, object] | None = None,
 ) -> ChatOpenAI:
-    """An OpenRouter chat model that only routes to zero-data-retention endpoints."""
+    """An OpenRouter chat model that only routes to zero-data-retention endpoints.
+
+    ``provider_extra`` adds routing preferences (the judge sets ``require_parameters``); it can
+    never switch zero data retention off.
+    """
     key = api_key if api_key is not None else os.environ.get(OPENROUTER_KEY_ENV)
     if not key:
-        msg = f"{OPENROUTER_KEY_ENV} is not set (read it with `read -s` / `read -s -x`)"
+        msg = (
+            f"{OPENROUTER_KEY_ENV} is not set (put it in .env, see .env.example, "
+            "or read it with `read -s` / `read -s -x`)"
+        )
         raise MissingApiKeyError(msg)
     model = ChatOpenAI(
         model=model_id,
@@ -167,7 +216,11 @@ def openrouter_model(
         timeout=timeout_s,
         max_retries=2,
         use_responses_api=False,
-        extra_body={"provider": dict(ZDR_PROVIDER_PREFS), "usage": {"include": True}},
+        temperature=temperature,
+        extra_body={
+            "provider": {**(provider_extra or {}), **ZDR_PROVIDER_PREFS},
+            "usage": {"include": True},
+        },
         http_async_client=http_async_client,
     )
     assert_zdr(model)

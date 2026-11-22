@@ -10,11 +10,15 @@ from pecker_drum.twin.models import (
     OPENROUTER_BASE_URL,
     SAFE_ANSWER,
     MissingApiKeyError,
+    ModelSpec,
     ModelSpecError,
+    asks_for_openrouter,
     assert_zdr,
     obedient_model,
     openrouter_model,
+    openrouter_spec_from_env,
     parse_model_spec,
+    refuse_key_as_model_id,
     safe_model,
 )
 
@@ -45,9 +49,49 @@ def test_parse_model_spec() -> None:
     assert parse_model_spec("fake:safe").is_fake
     spec = parse_model_spec("openrouter:vendor/model-x")
     assert (spec.kind, spec.model_id, spec.is_fake) == ("openrouter", "vendor/model-x", False)
-    for bad in ("fake:other", "openrouter:", "gpt-4", ""):
+    for bad in ("fake:other", "openrouter:", "openrouter", "gpt-4", ""):
         with pytest.raises(ModelSpecError):
             parse_model_spec(bad)
+
+
+def test_asks_for_openrouter_only_for_the_two_live_forms() -> None:
+    assert asks_for_openrouter("openrouter")
+    assert asks_for_openrouter("openrouter:vendor/x")
+    assert asks_for_openrouter("openrouter:")  # asks for it, then fails to parse
+    for value in ("fake:obedient", "fake:safe", "OpenRouter", "openrouterx", " openrouter", ""):
+        assert not asks_for_openrouter(value)
+
+
+def test_openrouter_spec_from_env() -> None:
+    spec = openrouter_spec_from_env({"DRUM_OPENROUTER_MODEL": " vendor/model-x:free "})
+    assert (spec.kind, spec.model_id, str(spec)) == (
+        "openrouter",
+        "vendor/model-x:free",
+        "openrouter:vendor/model-x:free",
+    )
+    with pytest.raises(ModelSpecError, match="needs a model id"):
+        openrouter_spec_from_env({})
+    with pytest.raises(ModelSpecError, match="needs a model id"):
+        openrouter_spec_from_env({"DRUM_OPENROUTER_MODEL": "   "})
+    for bad in (
+        "openrouter:vendor/x",
+        "vendor/x y",
+        "vendor/x\u200b".encode().decode("unicode_escape"),
+    ):
+        with pytest.raises(ModelSpecError, match="bare OpenRouter model id") as raised:
+            openrouter_spec_from_env({"DRUM_OPENROUTER_MODEL": bad})
+        assert bad not in str(raised.value)
+
+
+def test_a_model_id_is_never_the_key() -> None:
+    key = "fake-key-0123456789"
+    refuse_key_as_model_id(ModelSpec("openrouter", "vendor/x"), {"OPENROUTER_API_KEY": key})
+    refuse_key_as_model_id(ModelSpec("fake:safe"), {"OPENROUTER_API_KEY": key})
+    refuse_key_as_model_id(ModelSpec("openrouter", "vendor/x"), {"OPENROUTER_API_KEY": "x"})
+    for model_id in (key, f"vendor/{key}", "sk-or-v1-something"):
+        with pytest.raises(ModelSpecError, match="looks like an API key") as raised:
+            refuse_key_as_model_id(ModelSpec("openrouter", model_id), {"OPENROUTER_API_KEY": key})
+        assert key not in str(raised.value)
 
 
 def test_obedient_script_follows_self_test() -> None:
@@ -110,7 +154,9 @@ async def test_openrouter_requests_demand_zero_data_retention() -> None:
 
 def test_openrouter_needs_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    with pytest.raises(MissingApiKeyError, match="OPENROUTER_API_KEY"):
+    with pytest.raises(
+        MissingApiKeyError, match=r"OPENROUTER_API_KEY is not set \(put it in \.env"
+    ):
         openrouter_model("vendor/model-x")
 
 
@@ -119,3 +165,19 @@ def test_assert_zdr_refuses_models_without_it() -> None:
     model.extra_body = {"provider": {"zdr": False}}
     with pytest.raises(RuntimeError, match="zdr"):
         assert_zdr(model)
+
+
+def test_provider_extras_never_switch_zero_data_retention_off() -> None:
+    model = openrouter_model(
+        "vendor/model-x",
+        api_key="test-key",
+        temperature=0.0,
+        provider_extra={"zdr": False, "data_collection": "allow", "require_parameters": True},
+    )
+    assert model.extra_body is not None
+    assert model.extra_body["provider"] == {
+        "zdr": True,
+        "data_collection": "deny",
+        "require_parameters": True,
+    }
+    assert model.temperature == 0.0

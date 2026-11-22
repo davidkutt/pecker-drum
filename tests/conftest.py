@@ -1,4 +1,4 @@
-"""Shared test setup: no test may reach the network."""
+"""Shared test setup: no test may reach the network or see a real key."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from pecker_drum.netguard import allow_network, block_network
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
+LIVE_SETTINGS = ("OPENROUTER_API_KEY", "DRUM_OPENROUTER_MODEL")
+
 
 @pytest.fixture(autouse=True)
 def _no_network() -> Generator[None]:
@@ -20,6 +22,31 @@ def _no_network() -> Generator[None]:
         yield
     finally:
         allow_network()
+
+
+@pytest.fixture(autouse=True)
+def _no_live_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> Generator[None]:
+    """Hide a developer's key, model and ``.env`` from every test; restore them afterwards.
+
+    The CLI reads ``.env`` from the working directory, which is the checkout when pytest runs.
+    Tests point it at a file that does not exist; tests of ``.env`` handling point it back at
+    ``.env`` after changing into ``tmp_path``. Values the CLI copies from a test's ``.env`` into
+    the environment are removed again here.
+    """
+    saved = {name: os.environ.pop(name, None) for name in LIVE_SETTINGS}
+    monkeypatch.setattr(
+        "pecker_drum.cli.ENV_FILE", tmp_path_factory.getbasetemp() / "no-such-dir" / ".env"
+    )
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def _write(path: Path, text: str) -> None:
