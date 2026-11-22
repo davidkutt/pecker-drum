@@ -24,6 +24,7 @@ drum = "pecker_drum.cli:main"
 [dependency-groups]
 dev = [
     "httpx~=0.28.1",
+    "markdown-it-py~=4.3.0",
     "pyright~=1.1.414",
     "pytest~=9.2.0",
     "pytest-asyncio~=1.5.0",
