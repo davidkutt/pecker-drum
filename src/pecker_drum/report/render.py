@@ -1,4 +1,10 @@
-"""Markdown and JSON reports: per-item table first, then ASR@k, cost, latency and findings."""
+"""Markdown and JSON reports: per-item table first, then ASR@k, cost, latency and findings.
+
+Since M1.5 the JSON report carries every attempt's full answer (escaped), and the Markdown report
+shows the full answers of success and contained attempts inside fenced code blocks only. An
+advisory judge's labels appear next to the strict counts; they never change an outcome or a rate
+(ADR 0008).
+"""
 
 from __future__ import annotations
 
@@ -12,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from pecker_drum.items.schema import Item
-from pecker_drum.report.excerpt import code_span, escape_excerpt
+from pecker_drum.report.excerpt import code_span, escape_excerpt, fenced_block
 from pecker_drum.report.stats import (
     Aggregate,
     AttemptOutcome,
@@ -23,7 +29,7 @@ from pecker_drum.report.stats import (
     item_stats,
     percentile,
 )
-from pecker_drum.results import AttemptResult, RunInfo
+from pecker_drum.results import AttemptResult, JudgeLabel, RunInfo
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +57,49 @@ class CostLatency:
 
 
 @dataclass(frozen=True, slots=True)
+class LabelCounts:
+    """Judge labels for the attempts of one strict outcome."""
+
+    attempts: int = 0
+    complied: int = 0
+    reported: int = 0
+    unclear: int = 0
+
+    def text(self, outcome: str) -> str:
+        """``6 success (judge: 0 complied, 6 reported, 0 unclear)``."""
+        return (
+            f"{self.attempts} {outcome} (judge: {self.complied} complied, "
+            f"{self.reported} reported, {self.unclear} unclear)"
+        )
+
+    def as_json(self) -> dict[str, int]:
+        return {
+            "attempts": self.attempts,
+            "complied": self.complied,
+            "reported": self.reported,
+            "unclear": self.unclear,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class JudgeTally:
+    """Judge labels next to the strict counts, per item or overall."""
+
+    name: str
+    success: LabelCounts
+    contained: LabelCounts
+
+
+@dataclass(frozen=True, slots=True)
+class JudgeCost:
+    calls: int
+    with_cost: int
+    total_cost_usd: float | None
+    input_tokens: int
+    output_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
 class Report:
     info: RunInfo
     items: tuple[Item, ...]
@@ -60,6 +109,15 @@ class Report:
     by_owasp: tuple[Aggregate, ...]
     cost: CostLatency
     self_test: tuple[SelfTestRow, ...] = field(default=())
+    generated_at: str = ""
+    """When this report was written; the only line a re-render without a judge changes."""
+    judge_items: tuple[JudgeTally, ...] = field(default=())
+    judge_overall: JudgeTally | None = None
+    judge_cost: JudgeCost | None = None
+
+    @property
+    def judged(self) -> bool:
+        return bool(self.info.judge)
 
     @property
     def self_test_passed(self) -> bool:
@@ -80,11 +138,40 @@ def _cost_latency(results: Sequence[AttemptResult]) -> CostLatency:
     )
 
 
+def _label_counts(results: Sequence[AttemptResult], outcome: str) -> LabelCounts:
+    mine = [r for r in results if r.outcome == outcome]
+    labels = [r.judge.label for r in mine if r.judge is not None]
+    unlabelled = len(mine) - len(labels)  # only possible if the judge was added to part of a run
+    return LabelCounts(
+        attempts=len(mine),
+        complied=labels.count(JudgeLabel.COMPLIED),
+        reported=labels.count(JudgeLabel.REPORTED),
+        unclear=labels.count(JudgeLabel.UNCLEAR) + unlabelled,
+    )
+
+
+def _judge_tally(name: str, results: Sequence[AttemptResult]) -> JudgeTally:
+    return JudgeTally(name, _label_counts(results, "success"), _label_counts(results, "contained"))
+
+
+def _judge_cost(results: Sequence[AttemptResult]) -> JudgeCost:
+    usages = [r.judge.usage for r in results if r.judge is not None]
+    costs = [u.cost_usd for u in usages if u.cost_usd is not None]
+    return JudgeCost(
+        calls=len(usages),
+        with_cost=len(costs),
+        total_cost_usd=round(sum(costs), 6) if costs else None,
+        input_tokens=sum(u.input_tokens for u in usages),
+        output_tokens=sum(u.output_tokens for u in usages),
+    )
+
+
 def build_report(
     info: RunInfo,
     items: Sequence[Item],
     results: Sequence[AttemptResult],
     self_test: Sequence[SelfTestRow] = (),
+    generated_at: str = "",
 ) -> Report:
     order = {item.id: index for index, item in enumerate(items)}
     ordered = sorted(results, key=lambda r: (order.get(r.item_id, len(order)), r.attempt))
@@ -98,6 +185,7 @@ def build_report(
         aggregate(tag, [by_id[item.id] for item in items if tag in item.owasp], info.repeats)
         for tag in categories
     )
+    judged = bool(info.judge)
     return Report(
         info=info,
         items=tuple(items),
@@ -107,6 +195,14 @@ def build_report(
         by_owasp=by_owasp,
         cost=_cost_latency(ordered),
         self_test=tuple(self_test),
+        generated_at=generated_at,
+        judge_items=tuple(
+            _judge_tally(item.id, [r for r in ordered if r.item_id == item.id]) for item in items
+        )
+        if judged
+        else (),
+        judge_overall=_judge_tally("overall", ordered) if judged else None,
+        judge_cost=_judge_cost(ordered) if judged else None,
     )
 
 
@@ -210,21 +306,100 @@ def _aggregate_line(agg: Aggregate) -> list[str]:
     return lines
 
 
+def _judge_line(tally: JudgeTally) -> str:
+    return f"{tally.success.text('success')}; {tally.contained.text('contained')}"
+
+
+def _judge_cell(counts: LabelCounts, outcome: str) -> str:
+    return counts.text(outcome) if counts.attempts else "0"
+
+
+def _judge_sections(report: Report) -> list[str]:
+    """Labels per item next to the strict counts (only items with a success or contained)."""
+    rows = [t for t in report.judge_items if t.success.attempts or t.contained.attempts]
+    out = [
+        "## Judge (advisory)",
+        "",
+        f"Judge `{_cell(report.info.judge)}` labels every success and contained attempt as "
+        "complied, reported or unclear. The labels never change an outcome or a rate; the strict "
+        "counts above stand.",
+        "",
+    ]
+    if report.judge_overall is not None:
+        out += [f"- **Overall:** {_judge_line(report.judge_overall)}", ""]
+    if rows:
+        out += ["| Item | Successes | Contained |", "| --- | --- | --- |"]
+        out += [
+            f"| {t.name} | {_judge_cell(t.success, 'success')} "
+            f"| {_judge_cell(t.contained, 'contained')} |"
+            for t in rows
+        ]
+        out.append("")
+    return out
+
+
+def _judge_lists(report: Report) -> list[str]:
+    out: list[str] = []
+    for title, label in (("Judge disagrees", "reported"), ("Judge unclear", "unclear")):
+        hits = [r for r in report.results if r.judge is not None and r.judge.label == label]
+        out += [f"## {title} ({len(hits)})", ""]
+        out += [
+            f"- {r.item_id} #{r.attempt}: strict {r.outcome.value}, judge {label}: "
+            f"{code_span(r.judge.reason)}"
+            for r in hits
+            if r.judge is not None
+        ]
+        out.append("")
+    return out
+
+
+def _full_answers(report: Report) -> list[str]:
+    hits = [r for r in report.results if r.outcome in ("success", "contained")]
+    out = [
+        f"## Full answers (success and contained, {len(hits)})",
+        "",
+        "Each answer is escaped (invisible characters as \\uXXXX, backslashes doubled) and shown "
+        "only inside a fenced code block, so nothing in it renders.",
+        "",
+    ]
+    for result in hits:
+        out += [f"### {result.item_id} #{result.attempt}: {result.outcome.value}", ""]
+        if result.judge is not None:
+            reason = code_span(result.judge.reason)
+            out += [f"Judge: {result.judge.label.value}{f': {reason}' if reason else ''}", ""]
+        if result.answer is None:
+            out += ["_Full answer not recorded (attempt from before M1.5)._", ""]
+        elif not result.answer:
+            out += ["_Empty answer._", ""]
+        else:
+            out += [fenced_block(result.answer), ""]
+    return out
+
+
 def render_markdown(report: Report) -> str:
     info = report.info
     k = info.repeats
+    judge = (
+        f"{_cell(info.judge)} (advisory: labels success and contained attempts, never changes an "
+        "outcome)"
+        if info.judge
+        else "none"
+    )
     out: list[str] = [
         f"# pecker-drum report: {info.target} / {info.item_set}",
         "",
         f"- Run `{info.run_id}`, started {info.started_at}, finished {info.finished_at}",
+        f"- Report generated {report.generated_at}",
         f"- Item set `{info.item_set}` (sha256 `{info.set_digest[:12]}`), "
         f"{len(report.items)} items x {k} repeats",
         f"- Harness version {info.harness_version}",
+        f"- Judge: {judge}",
     ]
     out += [f"- {key}: {_cell(value)}" for key, value in sorted(info.settings.items())]
     out += [
         "",
-        "Excerpts are escaped and cut to 120 characters. Rates exclude errors.",
+        "Excerpts are escaped and cut to 120 characters. Rates exclude errors. Full answers of "
+        "success and contained attempts are at the end, inside fenced code blocks.",
         "",
         "## Per item",
         "",
@@ -244,7 +419,10 @@ def render_markdown(report: Report) -> str:
             + (f" {pct(stat.asr(k))} |" if k > 1 else "")
             + f" {_bound(stat)} |"
         )
-    out += ["", "## Overall", "", *_aggregate_line(report.overall), "", legend(k), ""]
+    out += ["", "## Overall", "", *_aggregate_line(report.overall)]
+    if report.judge_overall is not None:
+        out.append(f"- **Judge (advisory):** {_judge_line(report.judge_overall)}")
+    out += ["", legend(k), ""]
     if report.by_owasp:
         out += [
             "## Per OWASP category",
@@ -259,6 +437,8 @@ def render_markdown(report: Report) -> str:
             for agg in report.by_owasp
         ]
         out += ["", legend(k), ""]
+    if report.judged:
+        out += _judge_sections(report)
     cost = report.cost
     total = "n/a" if cost.total_cost_usd is None else f"${cost.total_cost_usd:.4f}"
     p50 = "n/a" if cost.latency_p50_s is None else f"{cost.latency_p50_s:.2f} s"
@@ -269,8 +449,15 @@ def render_markdown(report: Report) -> str:
         f"- Cost: {total} ({cost.with_cost}/{cost.attempts} attempts reported a cost)",
         f"- Tokens: {cost.input_tokens} in, {cost.output_tokens} out",
         f"- Latency per attempt: p50 {p50}, p95 {p95}",
-        "",
     ]
+    if report.judge_cost is not None:
+        jc = report.judge_cost
+        jtotal = "n/a" if jc.total_cost_usd is None else f"${jc.total_cost_usd:.4f}"
+        out.append(
+            f"- Judge: {jtotal} ({jc.with_cost}/{jc.calls} judge calls reported a cost), "
+            f"{jc.input_tokens} tokens in, {jc.output_tokens} out"
+        )
+    out.append("")
     if report.self_test:
         verdict = "passed" if report.self_test_passed else "FAILED"
         out += [
@@ -297,6 +484,9 @@ def render_markdown(report: Report) -> str:
     out += [f"## Errors ({len(errors)})", ""]
     out += [f"- {r.item_id} #{r.attempt}: {code_span(r.error or '')}" for r in errors]
     out.append("")
+    if report.judged:
+        out += _judge_lists(report)
+    out += _full_answers(report)
     return "\n".join(out)
 
 
@@ -322,10 +512,33 @@ def _aggregate_json(agg: Aggregate) -> dict[str, Any]:
     }
 
 
+def _judge_json(tally: JudgeTally | None) -> dict[str, Any] | None:
+    if tally is None:
+        return None
+    return {"success": tally.success.as_json(), "contained": tally.contained.as_json()}
+
+
+def _judge_list_json(report: Report, label: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "item": r.item_id,
+            "attempt": r.attempt,
+            "outcome": r.outcome.value,
+            "label": r.judge.label.value,
+            "reason": r.judge.reason,
+        }
+        for r in report.results
+        if r.judge is not None and r.judge.label == label
+    ]
+
+
 def render_json(report: Report) -> str:
     k = report.info.repeats
+    judge_by_item = {t.name: t for t in report.judge_items}
+    jc = report.judge_cost
     payload: dict[str, Any] = {
         "run": report.info.model_dump(mode="json"),
+        "generated_at": report.generated_at,
         "items": [
             {
                 "id": s.item_id,
@@ -338,10 +551,11 @@ def render_json(report: Report) -> str:
                 "asr1": s.p,
                 "asrk": s.asr(k),
                 "upper_bound_95": s.upper_bound,
+                "judge": _judge_json(judge_by_item.get(s.item_id)),
             }
             for s in report.stats
         ],
-        "overall": _aggregate_json(report.overall),
+        "overall": _aggregate_json(report.overall) | {"judge": _judge_json(report.judge_overall)},
         "by_owasp": [_aggregate_json(agg) for agg in report.by_owasp],
         "cost_latency": {
             "attempts": report.cost.attempts,
@@ -351,6 +565,15 @@ def render_json(report: Report) -> str:
             "output_tokens": report.cost.output_tokens,
             "latency_p50_s": report.cost.latency_p50_s,
             "latency_p95_s": report.cost.latency_p95_s,
+            "judge": None
+            if jc is None
+            else {
+                "calls": jc.calls,
+                "with_cost": jc.with_cost,
+                "total_cost_usd": jc.total_cost_usd,
+                "input_tokens": jc.input_tokens,
+                "output_tokens": jc.output_tokens,
+            },
         },
         "self_test": [
             {
@@ -362,6 +585,8 @@ def render_json(report: Report) -> str:
             }
             for row in report.self_test
         ],
+        "judge_disagreements": _judge_list_json(report, "reported"),
+        "judge_unclear": _judge_list_json(report, "unclear"),
         "attempts": [result.model_dump(mode="json") for result in report.results],
     }
     return json.dumps(payload, indent=2, ensure_ascii=True) + "\n"
@@ -408,6 +633,9 @@ def write_report(report: Report, reports_dir: Path, today: date) -> tuple[Path, 
 
 __all__ = [
     "CostLatency",
+    "JudgeCost",
+    "JudgeTally",
+    "LabelCounts",
     "Report",
     "SelfTestRow",
     "build_report",
