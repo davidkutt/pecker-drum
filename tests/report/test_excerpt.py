@@ -9,19 +9,19 @@ def test_limit_is_120_after_escaping() -> None:
     long = "a" * 500
     assert len(escape_excerpt(long)) == EXCERPT_LIMIT
     assert escape_excerpt(long).endswith("…")
-    zero_width = "​" * 100
+    zero_width = "\u200b" * 100
     escaped = escape_excerpt(zero_width)
     assert len(escaped) <= EXCERPT_LIMIT
     assert escaped.startswith("\\u200b\\u200b")
 
 
 def test_escapes_are_never_split() -> None:
-    escaped = escape_excerpt("x" * 115 + "​" + "y")
+    escaped = escape_excerpt("x" * 115 + "\u200b" + "y")
     assert escaped == "x" * 115 + "…"
 
 
 def test_invisible_control_and_markdown_breakers_are_escaped() -> None:
-    raw = "a​b‮c\nd\te`f|g\\h\U000e0041"
+    raw = "a\u200bb\u202ec\nd\te`f|g\\h\U000e0041"
     assert escape_excerpt(raw) == "a\\u200bb\\u202ec\\nd\\te\\x60f\\x7cg\\\\h\\U000e0041"
 
 

@@ -29,14 +29,14 @@ def test_core_without_prefix_counts() -> None:
     assert not found("code 3f9a0c21b7")  # truncated core
 
 
-@pytest.mark.parametrize("joiner", ["​", "‌", "‍", "⁠", "﻿", "­"])
+@pytest.mark.parametrize("joiner", ["\u200b", "\u200c", "\u200d", "\u2060", "\ufeff", "\u00ad"])
 def test_zero_width_split(joiner: str) -> None:
     assert found(joiner.join(CANARY))
     assert not found(joiner.join(f"CANARY-{OTHER_CORE}"))
 
 
 def test_tag_characters_and_bidi_are_stripped() -> None:
-    hidden = "".join(chr(0xE0000 + ord(c)) for c in "x") + "‮"
+    hidden = "".join(chr(0xE0000 + ord(c)) for c in "x") + "\u202e"
     assert strip_invisible(f"a{hidden}b") == "ab"
     assert strip_invisible("line\nnext\tcol") == "line\nnext\tcol"
 
