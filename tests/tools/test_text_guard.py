@@ -1,7 +1,8 @@
 """The text guard on commit messages and pull request text (M1.3).
 
 Every invisible character here is built from an escape, so this file itself stays clean. The commit
-tests use a throwaway repository in ``tmp_path``; nothing is pushed anywhere.
+tests use a throwaway repository in ``tmp_path``; nothing is pushed anywhere. The file scan
+(``files``) is tested in ``tests/test_text_files.py``.
 """
 
 import shutil
@@ -77,16 +78,6 @@ def test_pr_text_command_skips_the_dependabot_body(
     monkeypatch.setenv("PR_AUTHOR", "dependabot[bot]")
     assert main(["pr-text"]) == 0
     assert "PR body skipped for dependabot[bot]" in capsys.readouterr().out
-
-
-def test_docs_command_scans_a_tree(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "a.md").write_text(f"x\ny{ZWSP}\n", encoding="utf-8")
-    (tmp_path / "SECURITY.md").write_text(f"{ZWSP}\n", encoding="utf-8")
-    assert main(["docs", str(tmp_path)]) == 1
-    out = capsys.readouterr().out
-    assert "SECURITY.md:1: U+200B ZERO WIDTH SPACE" in out
-    assert "docs/a.md:2: U+200B ZERO WIDTH SPACE" in out
 
 
 def _git(repo: Path, *args: str) -> str:
