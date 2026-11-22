@@ -1,7 +1,8 @@
 # Dependencies
 
 Runtime dependencies (pinned to a minor version in `pyproject.toml`). All direct dependencies use
-permissive licences.
+permissive licences (MIT, Apache-2.0, BSD, ISC). Unmodified transitive dependencies under MPL-2.0
+are allowed (ADR 0005).
 
 | Package | Licence | Why |
 | --- | --- | --- |
@@ -24,9 +25,10 @@ Development dependencies:
 | `pytest-asyncio` | Apache-2.0 | Async tests |
 | `httpx` | BSD-3-Clause | Mock transport for the OpenRouter request test (also a transitive runtime dependency) |
 
-## Transitive dependencies to review
+## Transitive MPL-2.0 dependencies (allowed, ADR 0005)
 
-Three transitive packages carry MPL-2.0 (file-level weak copyleft), used unmodified:
+Three transitive packages carry MPL-2.0 (file-level weak copyleft), used unmodified. For orjson the
+MPL-2.0 part applies whichever of Apache-2.0 or MIT is chosen for the rest.
 
 | Package | Licence | Pulled in by |
 | --- | --- | --- |

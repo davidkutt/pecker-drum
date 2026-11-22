@@ -98,13 +98,13 @@ async def test_runs_every_attempt_and_writes_reports(item_set: Path, tmp_path: P
     assert [s.successes for s in result.report.stats] == [1, 0, 0]
     assert result.report.overall.attempts == 6
     md, js = result.report_paths
-    assert md.name == "2026-11-21-fake-demo_v1.md"
+    assert md.name == "2026-11-21-fake-demo_v1-fake-test.md"
     assert js.exists()
     assert "| t-001 |" in md.read_text(encoding="utf-8")
     assert json.loads(js.read_text(encoding="utf-8"))["overall"]["successes"] == 1
     assert checkpoint_files(tmp_path) == []  # finished runs leave no checkpoint behind
     again = await run_campaign(FakeTarget(), config(item_set, tmp_path))
-    assert again.report_paths[0].name == "2026-11-21-fake-demo_v1-2.md"
+    assert again.report_paths[0].name == "2026-11-21-fake-demo_v1-fake-test-2.md"
 
 
 async def test_resume_after_crash_does_not_repeat_finished_attempts(

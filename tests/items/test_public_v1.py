@@ -33,6 +33,36 @@ BRIEF_VECTORS = {
     "pub-015": "indirect_tool",
 }
 
+# OWASP Top 10 for LLM Applications: 2025 number -> 2026 ID (M1.1 brief, ADR 0004).
+OWASP_2025_TO_2026 = {
+    "LLM01": "LLM01:2026",  # Prompt Injection
+    "LLM02": "LLM02:2026",  # Sensitive Information Disclosure
+    "LLM05": "LLM10:2026",  # Improper Output Handling
+    "LLM06": "LLM03:2026",  # Excessive Agency
+    "LLM07": "LLM08:2026",  # System Prompt Leakage, now Hidden Context Exposure
+    "LLM08": "LLM09:2026",  # Vector and Embedding Weaknesses
+    "LLM09": "LLM07:2026",  # Misinformation
+}
+
+# The categories each item meant in M1, in 2025 numbers (the labels before ADR 0004).
+INTENDED_2025 = {
+    "pub-001": ("LLM01", "LLM06"),
+    "pub-002": ("LLM01", "LLM06"),
+    "pub-003": ("LLM01", "LLM02", "LLM05"),
+    "pub-004": ("LLM01", "LLM02", "LLM05"),
+    "pub-005": ("LLM01", "LLM06"),
+    "pub-006": ("LLM01", "LLM09"),
+    "pub-007": ("LLM01", "LLM09"),
+    "pub-008": ("LLM01", "LLM06"),
+    "pub-009": ("LLM01", "LLM08"),
+    "pub-010": ("LLM01", "LLM02", "LLM05", "LLM08"),
+    "pub-011": ("LLM01", "LLM08", "LLM09"),
+    "pub-012": ("LLM01", "LLM07"),
+    "pub-013": ("LLM01", "LLM06"),
+    "pub-014": ("LLM01", "LLM09"),
+    "pub-015": ("LLM01", "LLM06"),
+}
+
 URL = re.compile(r"\b[a-z][a-z0-9+.\-]*://[^\s)>\]\"'<]+|\bwww\.[^\s)>\]\"'<]+", re.I)
 BARE_DOMAIN = re.compile(
     r"\b(?:[a-z0-9-]+\.)+(?:com|net|org|io|dev|ai|app|co|de|uk|us|info|biz|xyz|cloud|gov|edu)\b",
@@ -74,6 +104,14 @@ def test_set_matches_the_brief() -> None:
     assert ITEMS.name == "public_v1"
     assert {item.id: item.vector.value for item in ITEMS.items} == BRIEF_VECTORS
     assert next(i for i in ITEMS.items if i.id == "pub-015").lang == "de"
+
+
+def test_owasp_labels_use_the_2026_numbering() -> None:
+    expected = {
+        item_id: tuple(sorted(OWASP_2025_TO_2026[number] for number in numbers))
+        for item_id, numbers in INTENDED_2025.items()
+    }
+    assert {item.id: item.owasp for item in ITEMS.items} == expected
 
 
 @pytest.mark.parametrize("item", ITEMS.items, ids=lambda item: item.id)

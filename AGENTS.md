@@ -73,6 +73,7 @@ LangChain for the twin agent and model access, LlamaIndex for the twin's knowled
 
 - Permissive licences only (MIT, Apache-2.0, BSD, ISC). List each runtime dependency with its licence
   and reason in `docs/dependencies.md`. Pin minor versions in `pyproject.toml`.
+- Unmodified transitive dependencies under MPL-2.0 are allowed (ADR 0005); direct dependencies stay MIT, Apache-2.0, BSD or ISC.
 
 **Evals**
 
@@ -86,6 +87,7 @@ LangChain for the twin agent and model access, LlamaIndex for the twin's knowled
 - Commit identity: `davidkutt <52502283+davidkutt@users.noreply.github.com>`.
 - Tests next to what they cover (`tests/` mirrors `src/`). Update `docs/spec.md` in the same PR when
   behaviour changes.
+- No format or control characters (Unicode Cf/Cc such as U+200B) in docs, commit messages or code outside fixtures/ and items/; write them as escapes. A test checks tracked docs.
 
 ## Layout
 

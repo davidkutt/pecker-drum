@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -309,9 +310,26 @@ def render_json(report: Report) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=True) + "\n"
 
 
-def report_paths(reports_dir: Path, today: date, target: str, item_set: str) -> tuple[Path, Path]:
-    """``reports/<date>-<target>-<set>.md`` (+ ``.json``); ``-2``, ``-3``... if taken."""
-    stem = f"{today.isoformat()}-{target}-{item_set}"
+_SLUG_SEPARATORS = re.compile(r"[^a-z0-9]+")
+
+
+def model_slug(model: str) -> str:
+    """The model as a file-name part: lower-case, ``[a-z0-9-]`` only.
+
+    ``fake:obedient`` gives ``fake-obedient``, ``openrouter:vendor/model`` gives
+    ``openrouter-vendor-model``; an empty or symbol-only model gives ``unknown-model``.
+    """
+    return _SLUG_SEPARATORS.sub("-", model.lower()).strip("-") or "unknown-model"
+
+
+def report_paths(
+    reports_dir: Path, today: date, target: str, item_set: str, model: str
+) -> tuple[Path, Path]:
+    """``reports/<date>-<target>-<set>-<model-slug>.md`` (+ ``.json``).
+
+    A taken name gets ``-2``, ``-3``... appended.
+    """
+    stem = f"{today.isoformat()}-{target}-{item_set}-{model_slug(model)}"
     counter = 1
     while True:
         name = stem if counter == 1 else f"{stem}-{counter}"
@@ -323,7 +341,9 @@ def report_paths(reports_dir: Path, today: date, target: str, item_set: str) -> 
 
 def write_report(report: Report, reports_dir: Path, today: date) -> tuple[Path, Path]:
     reports_dir.mkdir(parents=True, exist_ok=True)
-    md, js = report_paths(reports_dir, today, report.info.target, report.info.item_set)
+    md, js = report_paths(
+        reports_dir, today, report.info.target, report.info.item_set, report.info.model
+    )
     md.write_text(render_markdown(report), encoding="utf-8")
     js.write_text(render_json(report), encoding="utf-8")
     return md, js
@@ -335,6 +355,7 @@ __all__ = [
     "SelfTestRow",
     "build_report",
     "escape_excerpt",
+    "model_slug",
     "render_json",
     "render_markdown",
     "report_paths",

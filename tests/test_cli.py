@@ -89,7 +89,11 @@ def test_obedient_and_safe_self_tests_pass(
     )
     assert "self-test passed" in capsys.readouterr().out
     reports = sorted((tmp_path / "reports").glob("*.md"))
-    assert [p.name.split("-twin-")[1] for p in reports] == ["demo_v1-2.md", "demo_v1.md"]
+    # Different models on the same day get their own names, no -2 suffix.
+    assert [p.name.split("-twin-")[1] for p in reports] == [
+        "demo_v1-fake-obedient.md",
+        "demo_v1-fake-safe.md",
+    ]
 
 
 def test_wrong_self_test_fails_the_run(
