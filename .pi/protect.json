@@ -1,10 +1,11 @@
 {
-  "$comment": "pecker-nest safety gate for pecker-drum (AGENTS.md, Targets and private data): agents never read or write private/, never run private targets or live models.",
-  "read": ["private"],
+  "$comment": "pecker-nest safety gate for pecker-drum (AGENTS.md, Targets and private data): agents never read or write private/ or .env, never run private targets, live models or live judges.",
+  "read": ["private", ".env"],
   "write": ["AGENTS.md", "docs/milestones/**", ".cursorignore"],
   "commands": [
-    { "pattern": "--target[ =]+(?!twin( |$))", "reason": "private targets are run by David (AGENTS.md)" },
-    { "pattern": "--model[ =]+openrouter", "reason": "live runs cost money and are run by David (M1 brief)" },
+    { "pattern": "--target[^a-z]+(?![^a-z])(?!(twin|stub)([^a-z0-9]|$))", "reason": "private targets are run by David (AGENTS.md)" },
+    { "pattern": "--model[^a-z]+openrouter", "reason": "live runs cost money and are run by David (M1 brief)" },
+    { "pattern": "--judge[^a-z]+openrouter", "reason": "live judges cost money and are run by David (M1.5 brief)" },
     { "pattern": "private/|DRUM_PRIVATE", "reason": "private data stays out of agent sessions (AGENTS.md)" }
   ]
 }
