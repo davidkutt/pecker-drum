@@ -73,6 +73,7 @@ LangChain for the twin agent and model access, LlamaIndex for the twin's knowled
 
 - Permissive licences only (MIT, Apache-2.0, BSD, ISC). List each runtime dependency with its licence
   and reason in `docs/dependencies.md`. Pin minor versions in `pyproject.toml`.
+- Unmodified transitive dependencies under MPL-2.0 are allowed (ADR 0005); direct dependencies stay MIT, Apache-2.0, BSD or ISC.
 
 **Evals**
 

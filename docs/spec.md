@@ -1,6 +1,6 @@
 # pecker-drum spec
 
-Status: draft, 21 November 2026. Updated for M1 (ADRs 0001-0003) and M1.1 (ADR 0004).
+Status: draft, 21 November 2026. Updated for M1 (ADRs 0001-0003) and M1.1 (ADRs 0004-0005).
 
 ## Purpose
 
