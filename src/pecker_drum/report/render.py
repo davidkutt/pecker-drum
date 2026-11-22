@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -16,11 +17,11 @@ from pecker_drum.report.stats import (
     Aggregate,
     AttemptOutcome,
     Interval,
+    IntervalMethod,
     ItemStats,
     aggregate,
     item_stats,
     percentile,
-    upper_bound_zero,
 )
 from pecker_drum.results import AttemptResult, RunInfo
 
@@ -112,14 +113,64 @@ def build_report(
 # -- formatting -----------------------------------------------------------------------------
 
 
+# A bound within this many tenths of a percent of a display step counts as on the step, so float
+# noise such as 0.95 * 1000 = 950.0000000000001 does not round a bound one step outward.
+_STEP_TOLERANCE = 1e-9
+
+
 def pct(value: float | None) -> str:
     return "n/a" if value is None else f"{value * 100:.1f} %"
 
 
-def _ci(interval: Interval | None) -> str:
-    if interval is None:
-        return ""
-    return f" [95 % CI {interval.low * 100:.1f} to {interval.high * 100:.1f} %]"
+def pct_up(value: float) -> str:
+    """An upper bound in percent, rounded up to 0.1 % (outward, ADR 0006)."""
+    return f"{math.ceil(value * 1000 - _STEP_TOLERANCE) / 10:.1f} %"
+
+
+def pct_down(value: float) -> str:
+    """A lower bound in percent, rounded down to 0.1 % (outward, ADR 0006)."""
+    return f"{math.floor(value * 1000 + _STEP_TOLERANCE) / 10:.1f} %"
+
+
+def _ci(interval: Interval, label: str = "") -> str:
+    suffix = f", {label}" if label else ""
+    return f" [95 % CI {interval.low * 100:.1f} to {interval.high * 100:.1f} %{suffix}]"
+
+
+def estimate(
+    value: float | None,
+    interval: Interval | None,
+    method: IntervalMethod | None,
+    successes: int,
+    attempts: int,
+) -> str:
+    """A group rate under the interval rule: ``0/n, ≤ x %``, ``n/n, ≥ y %`` or rate + interval."""
+    if value is None or interval is None or method is None:
+        return "n/a"
+    match method:
+        case "zero_bound":
+            return f"0/{attempts}, ≤ {pct_up(interval.high)}"
+        case "all_bound":
+            return f"{successes}/{attempts}, ≥ {pct_down(interval.low)}"
+        case "wilson":
+            return f"{pct(value)}{_ci(interval, 'Wilson')}"
+        case "bootstrap":
+            return f"{pct(value)}{_ci(interval)}"
+
+
+def legend(k: int) -> str:
+    """The line under every group table: which method and what it assumes."""
+    text = (
+        "_0/n shows the one-sided 95 % upper bound, n/n the one-sided 95 % lower bound (both"
+        " rounded outward); otherwise the 95 % interval is a bootstrap clustered by item (5 or more"
+        " items) or Wilson (fewer). The bounds and Wilson treat attempts as independent, while"
+        " repeats of one item are correlated."
+    )
+    if k > 1:
+        text += (
+            f" ASR@{k} carries the bounds through 1 - (1 - p)^{k}; its Wilson uses n/{k} trials."
+        )
+    return text + "_"
 
 
 def _cell(text: str) -> str:
@@ -134,23 +185,26 @@ def _rate(successes: int, valid: int) -> str:
 
 def _bound(stat: ItemStats) -> str:
     bound = stat.upper_bound
-    return "" if bound is None else f"0/{stat.valid}, ≤ {pct(bound)}"
+    return "" if bound is None else f"0/{stat.valid}, ≤ {pct_up(bound)}"
+
+
+def _asr1(agg: Aggregate) -> str:
+    return estimate(agg.asr1, agg.asr1_ci, agg.asr1_method, agg.successes, agg.attempts)
+
+
+def _asrk(agg: Aggregate) -> str:
+    return estimate(agg.asrk, agg.asrk_ci, agg.asrk_method, agg.successes, agg.attempts)
 
 
 def _aggregate_line(agg: Aggregate) -> list[str]:
     counts = f"{agg.successes}/{agg.attempts} attempts, {agg.items} items"
-    lines = [f"- **ASR@1:** {pct(agg.asr1)}{_ci(agg.asr1_ci)} ({counts})"]
+    lines = [f"- **ASR@1:** {_asr1(agg)} ({counts})"]
     if agg.k > 1:
-        lines.append(f"- **ASR@{agg.k}:** {pct(agg.asrk)}{_ci(agg.asrk_ci)} ({counts})")
+        lines.append(f"- **ASR@{agg.k}:** {_asrk(agg)} ({counts})")
     lines += [
         f"- **Contained:** {agg.contained}/{agg.attempts} attempts",
         f"- **Errors (excluded from rates):** {agg.errors}",
     ]
-    if agg.successes == 0 and agg.attempts:
-        lines.append(
-            f"- **Zero successes:** 0/{agg.attempts} attempts; per-item upper bounds in the table"
-            f" (pooled, ignoring clustering: ≤ {pct(upper_bound_zero(agg.attempts))})"
-        )
     return lines
 
 
@@ -188,7 +242,7 @@ def render_markdown(report: Report) -> str:
             + (f" {pct(stat.asr(k))} |" if k > 1 else "")
             + f" {_bound(stat)} |"
         )
-    out += ["", "## Overall", "", *_aggregate_line(report.overall), ""]
+    out += ["", "## Overall", "", *_aggregate_line(report.overall), "", legend(k), ""]
     if report.by_owasp:
         out += [
             "## Per OWASP category",
@@ -199,11 +253,10 @@ def render_markdown(report: Report) -> str:
         ]
         out += [
             f"| {agg.name} | {agg.items} | {agg.successes}/{agg.attempts} | {agg.contained} "
-            f"| {agg.errors} | {pct(agg.asr1)}{_ci(agg.asr1_ci)} |"
-            + (f" {pct(agg.asrk)}{_ci(agg.asrk_ci)} |" if k > 1 else "")
+            f"| {agg.errors} | {_asr1(agg)} |" + (f" {_asrk(agg)} |" if k > 1 else "")
             for agg in report.by_owasp
         ]
-        out.append("")
+        out += ["", legend(k), ""]
     cost = report.cost
     total = "n/a" if cost.total_cost_usd is None else f"${cost.total_cost_usd:.4f}"
     p50 = "n/a" if cost.latency_p50_s is None else f"{cost.latency_p50_s:.2f} s"
@@ -260,8 +313,10 @@ def _aggregate_json(agg: Aggregate) -> dict[str, Any]:
         "k": agg.k,
         "asr1": agg.asr1,
         "asr1_ci95": _interval_json(agg.asr1_ci),
+        "asr1_method": agg.asr1_method,
         "asrk": agg.asrk,
         "asrk_ci95": _interval_json(agg.asrk_ci),
+        "asrk_method": agg.asrk_method,
     }
 
 
