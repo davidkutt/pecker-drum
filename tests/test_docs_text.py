@@ -34,8 +34,7 @@ def test_scope_is_the_named_docs_only() -> None:
     assert {"README.md", "AGENTS.md", "fixtures/README.md", "docs/spec.md"} <= scanned
     assert "docs/milestones/M1.1.md" in scanned
     outside = {rel for rel in scanned if not rel.startswith("docs/")}
-    assert outside <= {"README.md", "AGENTS.md", "SECURITY.md", "fixtures/README.md"}
-    assert outside >= {"README.md", "AGENTS.md", "fixtures/README.md"}
+    assert outside == {"README.md", "AGENTS.md", "SECURITY.md", "fixtures/README.md"}
 
 
 def test_planted_zero_width_space_is_reported_with_file_line_and_code_point(
