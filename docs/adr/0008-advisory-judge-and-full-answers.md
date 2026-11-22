@@ -57,8 +57,7 @@ LLM judge "may add a note but never decides an outcome on its own".
    only inside a fenced code block, with no info string and a fence one backtick longer than the
    longest backtick run in the answer (at least three). A closing fence needs at least as many
    backticks, so nothing in the answer can end the block, and no link, image or HTML in it renders.
-   Excerpts in tables stay at 120 characters. `AGENTS.md` still states the old rule; David updates
-   it.
+   Excerpts in tables stay at 120 characters.
 8. **Run record instead of a kept checkpoint.** The brief asks for re-rendering "from its
    checkpoint", but the spec deletes the checkpoint of a finished run. A finished run now also
    writes `reports/.runs/<run id>.json`: the run info, the items, every attempt result and the
