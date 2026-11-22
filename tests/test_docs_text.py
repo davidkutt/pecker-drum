@@ -2,44 +2,16 @@
 
 Fixtures and items may hold such characters on purpose (attack text); docs never do. Write them as
 escapes instead, for example ``\\u200b``. Every file under ``docs/`` is scanned, so a file that is
-not UTF-8 is reported too.
+not UTF-8 is reported too. The checker lives in ``tools/text_guard.py`` (M1.3); CI uses the same
+script for commit messages and pull request text.
 """
 
-import unicodedata
 from pathlib import Path
 
 import pytest
+from text_guard import doc_files, findings
 
 ROOT = Path(__file__).resolve().parents[1]
-FLAGGED_CATEGORIES = frozenset({"Cf", "Cc"})
-ALLOWED = frozenset("\t\n\r")
-
-
-def doc_files(root: Path) -> list[Path]:
-    """``README.md``, ``AGENTS.md``, ``fixtures/README.md`` and every file under ``docs/``."""
-    files = [root / "README.md", root / "AGENTS.md", root / "fixtures" / "README.md"]
-    docs = root / "docs"
-    if docs.is_dir():
-        files += sorted(path for path in docs.rglob("*") if path.is_file())
-    return [path for path in files if path.is_file()]
-
-
-def findings(path: Path, root: Path) -> list[str]:
-    """One ``file:line: U+XXXX NAME`` entry per format or control character."""
-    rel = path.relative_to(root).as_posix()
-    try:
-        text = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError as exc:
-        return [f"{rel}: not UTF-8 ({exc.reason} at byte {exc.start})"]
-    found: list[str] = []
-    for number, line in enumerate(text.split("\n"), start=1):
-        for char in line:
-            category = unicodedata.category(char)
-            if char in ALLOWED or category not in FLAGGED_CATEGORIES:
-                continue
-            name = unicodedata.name(char, "control character" if category == "Cc" else "unnamed")
-            found.append(f"{rel}:{number}: U+{ord(char):04X} {name}")
-    return found
 
 
 def plant(root: Path, rel: str, text: str) -> Path:
@@ -62,7 +34,7 @@ def test_scope_is_the_named_docs_only() -> None:
     assert {"README.md", "AGENTS.md", "fixtures/README.md", "docs/spec.md"} <= scanned
     assert "docs/milestones/M1.1.md" in scanned
     outside = {rel for rel in scanned if not rel.startswith("docs/")}
-    assert outside == {"README.md", "AGENTS.md", "fixtures/README.md"}
+    assert outside == {"README.md", "AGENTS.md", "SECURITY.md", "fixtures/README.md"}
 
 
 def test_planted_zero_width_space_is_reported_with_file_line_and_code_point(

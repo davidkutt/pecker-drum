@@ -44,14 +44,17 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "S", "PT", "ASYNC", "C4",
 "tests/**" = ["S101", "S105", "S106"]
 
 [tool.pyright]
-include = ["src", "tests"]
-strict = ["src"]
+include = ["src", "tests", "tools"]
+strict = ["src", "tools"]
+# tools/ holds dev-only scripts (not part of the package); tests import them by module name.
+extraPaths = ["tools"]
 pythonVersion = "3.13"
 venvPath = "."
 venv = ".venv"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tools"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra"

@@ -37,3 +37,19 @@ MPL-2.0 part applies whichever of Apache-2.0 or MIT is chosen for the rest.
 | `orjson` | MPL-2.0 AND (Apache-2.0 OR MIT) | `langgraph-sdk` (via `langgraph`) |
 
 `py-rust-stemmers` (via `fastembed`) ships no licence metadata; its repository states MIT.
+
+## CI tools (not dependencies)
+
+CI runs two tools through `uvx`, each in a throwaway environment. They are not project
+dependencies: they are not in `pyproject.toml` or `uv.lock`, and they never ship with pecker-drum.
+
+| Tool | Version | Licence | Why |
+| --- | --- | --- | --- |
+| `pip-audit` | 2.10.1 | Apache-2.0 | Known vulnerabilities in the locked dependencies (job `audit`) |
+| `zizmor` | 1.32.0 | MIT | Lint for the workflows and the Dependabot configuration (job `zizmor`) |
+
+Both versions are pinned in the `run:` lines of `.github/workflows/ci.yml` and are **updated by
+hand**: Dependabot updates the pinned actions and `uv.lock`, but not versions inside `run:` lines.
+To bump one, read its release notes, run it locally with the new version (`uvx pip-audit@<version>`,
+`uvx zizmor@<version>`), fix what it reports and change the version in the workflow and in this
+table in the same pull request.
