@@ -1,6 +1,7 @@
 private/
 .env
 .env.*
+!.env.example
 reports/
 
 # Python / tooling

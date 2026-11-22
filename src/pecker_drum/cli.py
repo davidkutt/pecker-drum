@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 import warnings
 from collections.abc import Sequence
@@ -12,6 +13,7 @@ from pathlib import Path
 from pecker_drum import __version__
 from pecker_drum.campaign.graph import CampaignConfig, CampaignResult, run_campaign
 from pecker_drum.campaign.selftest import self_test_check
+from pecker_drum.envfile import EnvFileError, EnvFileResult, load_env_file
 from pecker_drum.grading.links import DEFAULT_ALLOWED_HOSTS
 from pecker_drum.items.loader import ItemSetError, resolve_set_path
 from pecker_drum.netguard import block_network
@@ -19,23 +21,47 @@ from pecker_drum.report.render import pct
 from pecker_drum.targets.twin import TwinSettings, TwinTarget
 from pecker_drum.twin.embeddings import EmbedderName
 from pecker_drum.twin.fixtures import FixtureError
-from pecker_drum.twin.models import MissingApiKeyError, ModelSpecError, parse_model_spec
+from pecker_drum.twin.models import (
+    OPENROUTER_KEY_ENV,
+    OPENROUTER_MODEL_ENV,
+    MissingApiKeyError,
+    ModelSpec,
+    ModelSpecError,
+    asks_for_openrouter,
+    openrouter_spec_from_env,
+    parse_model_spec,
+    refuse_key_as_model_id,
+)
 
 EXIT_OK = 0
 EXIT_SELF_TEST_FAILED = 1
 EXIT_USAGE = 2
 EXIT_INTERRUPTED = 130
 
+ENV_FILE = Path(".env")
+"""Read from the working directory, and only when ``--model`` asks for OpenRouter (ADR 0007)."""
+LIVE_SETTINGS = (OPENROUTER_KEY_ENV, OPENROUTER_MODEL_ENV)
+"""The only names taken from ``.env``."""
+
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="drum", description="Red-team harness for RAG agents.")
+    # No abbreviations (``--mod``): only the full ``--model`` spelling selects a model, so a gate
+    # that matches ``--model openrouter`` on the command line sees every live run.
+    parser = argparse.ArgumentParser(
+        prog="drum", description="Red-team harness for RAG agents.", allow_abbrev=False
+    )
     parser.add_argument("--version", action="version", version=f"pecker-drum {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
-    run = commands.add_parser("run", help="run an item set against a target")
+    run = commands.add_parser("run", help="run an item set against a target", allow_abbrev=False)
     run.add_argument("--target", required=True, help="target to attack (M1: twin)")
     run.add_argument("--set", dest="item_set", required=True, help="item set name or .jsonl path")
     run.add_argument(
-        "--model", required=True, help="fake:obedient, fake:safe or openrouter:<model id>"
+        "--model",
+        required=True,
+        help=(
+            "fake:obedient, fake:safe, openrouter:<model id>, or openrouter for the model id in "
+            f"{OPENROUTER_MODEL_ENV} (environment or .env)"
+        ),
     )
     run.add_argument("--repeats", type=int, default=1, help="attempts per item (k), default 1")
     run.add_argument("--concurrency", type=int, default=4, help="parallel attempts, default 4")
@@ -95,6 +121,43 @@ def _print_summary(result: CampaignResult) -> None:
     print(f"        {result.report_paths[1]}")
 
 
+def _warn_about_env_file(result: EnvFileResult) -> None:
+    if result.readable_by_others:
+        print(
+            f"drum: warning: {ENV_FILE} is readable by group or others; "
+            f"restrict it with chmod 600 {ENV_FILE}",
+            file=sys.stderr,
+        )
+    skipped = list(result.ignored)
+    if result.unnamed:
+        entries = "entry" if result.unnamed == 1 else "entries"
+        skipped.append(f"{result.unnamed} {entries} without a plain NAME=value")
+    if skipped:
+        print(
+            f"drum: warning: {ENV_FILE}: ignored {', '.join(skipped)} "
+            f"(only {' and '.join(LIVE_SETTINGS)} are read)",
+            file=sys.stderr,
+        )
+
+
+def _model_spec(value: str) -> ModelSpec:
+    """Resolve ``--model``. Only ``openrouter`` and ``openrouter:<id>`` open ``.env`` (ADR 0007)."""
+    if not asks_for_openrouter(value):
+        return parse_model_spec(value)  # a fake model or an error: .env is never opened
+    explicit = parse_model_spec(value) if value != "openrouter" else None  # syntax first
+    loaded = load_env_file(ENV_FILE, LIVE_SETTINGS)
+    _warn_about_env_file(loaded)
+    spec = explicit or openrouter_spec_from_env(os.environ)
+    refuse_key_as_model_id(spec, os.environ)
+    if explicit is None:
+        source = ENV_FILE if OPENROUTER_MODEL_ENV in loaded.loaded else "the environment"
+        print(
+            f"drum: --model openrouter uses {spec} ({OPENROUTER_MODEL_ENV} from {source})",
+            file=sys.stderr,
+        )
+    return spec
+
+
 def _run(args: argparse.Namespace) -> int:
     if args.target != "twin":
         print(f"drum: unknown target {args.target!r} (M1 supports: twin)", file=sys.stderr)
@@ -103,9 +166,9 @@ def _run(args: argparse.Namespace) -> int:
         print("drum: --repeats and --concurrency must be at least 1", file=sys.stderr)
         return EXIT_USAGE
     try:
-        spec = parse_model_spec(args.model)
         set_path = resolve_set_path(args.item_set, args.items_dir)
-    except (ModelSpecError, ItemSetError) as exc:
+        spec = _model_spec(args.model)
+    except (ModelSpecError, ItemSetError, EnvFileError) as exc:
         print(f"drum: {exc}", file=sys.stderr)
         return EXIT_USAGE
     if spec.is_fake:
