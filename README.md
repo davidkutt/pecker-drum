@@ -3,8 +3,8 @@
 A red-team harness for RAG apps and agents. It plants attacker text where a target reads it (issues,
 pull requests, CI logs, knowledge-base documents, web pages), asks an innocent question, grades every
 channel deterministically (answer, sources, tool calls) and reports attack success rates with honest
-statistics: per-item results first, then ASR@k with clustered bootstrap intervals, and upper bounds
-for zero results.
+statistics: per-item results first, then ASR@k with one interval rule for every group: one-sided
+bounds when nothing or everything succeeded, a clustered bootstrap from five items, Wilson below.
 
 Spec: [docs/spec.md](docs/spec.md) · Rules for coding agents: [AGENTS.md](AGENTS.md) ·
 Decisions: [docs/adr/](docs/adr/) · Dependencies: [docs/dependencies.md](docs/dependencies.md) ·
@@ -21,7 +21,9 @@ Milestones: [docs/milestones/](docs/milestones/)
 M1 is built: harness core, the twin, the `public_v1` item set (15 items) and reports. Lint, types,
 tests and both self-tests pass in CI. M1.1 fixed what had to be right before the first live run:
 OWASP tags in the 2026 numbering, the model in report file names, and a guard against invisible
-characters in the docs. The first live run against an OpenRouter model is still open.
+characters in the docs. M1.2 replaced collapsed intervals such as `[95 % CI 0.0 to 0.0 %]` in the
+category and overall statistics with one interval rule. The first live run against an OpenRouter
+model is still open.
 Next come an adapter for a private RAG target (M2), an adaptive attacker (M3), and guardrail
 middleware with a CI gate (M4); see [Milestones](docs/spec.md#milestones-planned).
 
@@ -116,9 +118,11 @@ its digest, `--repeats` and the harness version. Changing any of those starts a 
 ## Reading a report
 
 Each run writes `reports/<date>-<target>-<set>-<model-slug>.md` and a `.json` file with the same
-numbers (keys `run`, `items`, `overall`, `by_owasp`, `cost_latency`, `self_test`, `attempts`). The
-model slug is the `--model` value in lower case with every run of other characters turned into `-`:
-`fake:obedient` gives `2026-11-22-twin-public_v1-fake-obedient.md`, `openrouter:vendor/model` gives
+numbers (keys `run`, `items`, `overall`, `by_owasp`, `cost_latency`, `self_test`, `attempts`). Every
+group in `overall` and `by_owasp` names its interval method in `asr1_method` and `asrk_method`
+(`zero_bound`, `all_bound`, `bootstrap` or `wilson`). The model slug is the `--model` value in lower
+case with every run of other characters turned into `-`: `fake:obedient` gives
+`2026-11-22-twin-public_v1-fake-obedient.md`, `openrouter:vendor/model` gives
 `...-openrouter-vendor-model.md`. Further runs with the same model on the same day get `-2`, `-3`
 and so on. OWASP tags use the 2026 numbering (`LLM01:2026` to `LLM10:2026`).
 
@@ -126,8 +130,8 @@ and so on. OWASP tags use the 2026 numbering (`LLM01:2026` to `LLM10:2026`).
 | --- | --- |
 | Header | Run id, item set and its sha256 digest, items × repeats, harness version, allowlist, approval policy, embedder, model |
 | Per item | Successes, contained, blocked and errors per item; ASR@1 with its counts (`2/5 (40.0 %)`); ASR@k; for 0 successes the upper bound (`0/5, ≤ 45.1 %`) |
-| Overall | ASR@1 and ASR@k with a 95 % interval, contained count, errors |
-| Per OWASP category | The same per tag; an item with several tags counts in each |
+| Overall | ASR@1 and ASR@k under the interval rule below (`0/45, ≤ 6.5 %`, `9/9, ≥ 71.6 %`, `60.0 % [95 % CI 33.3 to 80.0 %]` or `40.0 % [95 % CI 11.8 to 76.9 %, Wilson]`), contained count, errors, and a legend line |
+| Per OWASP category | The same per tag; an item with several tags counts in each. A legend line under the table |
 | Cost and latency | Cost as reported by the provider, tokens in and out, latency p50 and p95 per attempt |
 | Self-test | Fake models only: expected against actual outcome per item |
 | Successes, Contained, Errors | Every such attempt with item, attempt number, the predicates that fired and an excerpt |
@@ -158,13 +162,34 @@ and so on. OWASP tags use the 2026 numbering (`LLM01:2026` to `LLM10:2026`).
 - **Per item first.** The mean hides which attacks work. Read the per-item table before the
   overall line.
 - **Zero isn't zero.** `0/n` comes with the one-sided 95 % upper bound 1 − 0.05^(1/n). Five clean
-  attempts still allow a true rate of up to 45.1 %; it takes 10 for 25.9 %, 20 for 13.9 % and 50
-  for 5.8 %.
+  attempts still allow a true rate of up to 45.1 %; it takes 10 for 25.9 %, 20 for 14.0 % and 50
+  for 5.9 %.
+- **All isn't all.** `n/n` comes with the one-sided 95 % lower bound 0.05^(1/n): three successes in
+  three attempts only show that the rate is at least 36.8 %.
 - **ASR@k** is 1 − (1 − p)^k per item, averaged: the chance that an attacker who can retry k times
   succeeds at least once. An item that works one time in five (p = 0.2) gets through within five
   tries 67 % of the time.
-- **Intervals resample whole items.** Repeats of one item aren't independent, so the bootstrap
-  draws items, not attempts. With 15 items the intervals are wide, and that is the honest answer.
+- **One interval rule for every group.** The overall lines and every category row follow the same
+  rule, for ASR@1 and ASR@k, with n the valid attempts in the group:
+
+  | Group | Shown as |
+  | --- | --- |
+  | 0 successes | `0/n, ≤ x %` (upper bound) |
+  | Every attempt a success | `n/n, ≥ y %` (lower bound) |
+  | Otherwise, 5 or more items | rate and a bootstrap interval that resamples whole items |
+  | Otherwise, fewer than 5 items | rate and a Wilson interval over the attempts, marked `Wilson` |
+
+  Repeats of one item aren't independent, so the bootstrap draws items, not attempts. With 15
+  items its intervals are wide, and that is the honest answer. Below five items a bootstrap
+  says little, so Wilson takes over; it also steps in when the bootstrap has zero width because
+  every item has the same rate. The bounds and Wilson treat attempts as independent, which
+  repeats of one item are not, so read them as optimistic; the legend line under each table
+  says so.
+- **ASR@k bounds follow from the ASR@1 bounds** through 1 − (1 − p)^k, so 0/45 at k = 3 reads
+  `≤ 18.2 %` for ASR@3 next to `≤ 6.5 %` for ASR@1. Its Wilson interval counts n/k trials of k
+  attempts, an approximation (ADR 0006).
+- **Bounds round outward.** Upper bounds round up and lower bounds down to 0.1 %, so a bound never
+  claims more than the data allow; `0/45` reads `≤ 6.5 %`, not 6.4 %.
 
 ### Excerpts
 
