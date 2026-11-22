@@ -2,12 +2,15 @@ import json
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from pecker_drum.grading.outcome import Outcome
 from pecker_drum.items.schema import Item
 from pecker_drum.observation import Usage
 from pecker_drum.report.render import (
     SelfTestRow,
     build_report,
+    model_slug,
     render_json,
     render_markdown,
     report_paths,
@@ -119,10 +122,55 @@ def test_self_test_section() -> None:
     assert "| t-002 | contained | blocked | tool_proposed | NO |" in text
 
 
-def test_report_paths_do_not_overwrite(tmp_path: Path) -> None:
+def test_report_paths_carry_the_model_and_do_not_overwrite(tmp_path: Path) -> None:
     report = build_report(INFO, ITEMS, RESULTS)
-    first = write_report(report, tmp_path, date(2026, 11, 21))
-    assert first[0].name == "2026-11-21-twin-demo_v1.md"
-    assert report_paths(tmp_path, date(2026, 11, 21), "twin", "demo_v1")[0].name == (
-        "2026-11-21-twin-demo_v1-2.md"
+    md, js = write_report(report, tmp_path, date(2026, 11, 21))
+    assert (md.name, js.name) == (
+        "2026-11-21-twin-demo_v1-fake-obedient.md",
+        "2026-11-21-twin-demo_v1-fake-obedient.json",
     )
+    day = date(2026, 11, 21)
+    again = report_paths(tmp_path, day, "twin", "demo_v1", "fake:obedient")
+    assert [p.name for p in again] == [
+        "2026-11-21-twin-demo_v1-fake-obedient-2.md",
+        "2026-11-21-twin-demo_v1-fake-obedient-2.json",
+    ]
+    other = report_paths(tmp_path, day, "twin", "demo_v1", "openrouter:vendor/model")
+    assert other[0].name == "2026-11-21-twin-demo_v1-openrouter-vendor-model.md"
+
+
+def test_report_paths_skip_a_name_taken_by_the_json_file_alone(tmp_path: Path) -> None:
+    (tmp_path / "2026-11-21-twin-demo_v1-fake-safe.json").write_text("{}", encoding="utf-8")
+    md, _ = report_paths(tmp_path, date(2026, 11, 21), "twin", "demo_v1", "fake:safe")
+    assert md.name == "2026-11-21-twin-demo_v1-fake-safe-2.md"
+
+
+@pytest.mark.parametrize(
+    ("model", "slug"),
+    [
+        ("fake:obedient", "fake-obedient"),
+        ("fake:safe", "fake-safe"),
+        ("openrouter:vendor/model", "openrouter-vendor-model"),
+        ("openrouter:Vendor/Model-3.5_Turbo:free", "openrouter-vendor-model-3-5-turbo-free"),
+        ("openrouter:vendor//model--x", "openrouter-vendor-model-x"),
+        ("  openrouter: vendor/model  ", "openrouter-vendor-model"),
+        ("openrouter:../../etc/passwd", "openrouter-etc-passwd"),
+        ("openrouter:modèle", "openrouter-mod-le"),
+        ("", "unknown-model"),
+        (":/.", "unknown-model"),
+    ],
+)
+def test_model_slug(model: str, slug: str) -> None:
+    assert model_slug(model) == slug
+
+
+@pytest.mark.parametrize(
+    "model", ["fake:obedient", "openrouter:A/B.C_D:e", "x\\y\nz", "\u00c9\u212a\u0130"]
+)
+def test_model_slug_only_uses_lower_case_letters_digits_and_dashes(model: str) -> None:
+    slug = model_slug(model)
+    assert slug
+    assert set(slug) <= set("abcdefghijklmnopqrstuvwxyz0123456789-")
+    assert not slug.startswith("-")
+    assert not slug.endswith("-")
+    assert "--" not in slug

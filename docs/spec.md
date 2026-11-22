@@ -139,7 +139,10 @@ denying all write tools, `tool_executed` on a write tool is unreachable, so thos
 - A SQLite checkpoint per run id (hash of target settings, set digest, repeats and harness version)
   lives in `reports/.checkpoints/`. Running the same command again resumes an interrupted run
   without repeating finished attempts; `--fresh` starts over; a finished run deletes its checkpoint.
-- Reports: `reports/<date>-<target>-<set>.md` and `.json` (`-2`, `-3`, ... if the name is taken).
+- Reports: `reports/<date>-<target>-<set>-<model-slug>.md` and `.json` (`-2`, `-3`, ... if the name
+  is taken). The model slug is the model in lower case, with every run of characters outside
+  `[a-z0-9]` turned into `-` and no `-` at either end (`fake:obedient` gives `fake-obedient`,
+  `openrouter:vendor/model` gives `openrouter-vendor-model`); an empty slug becomes `unknown-model`.
 - **Guardrail middleware (M4):** optional, switched per run, so every report can compare with and without.
 
 ## Milestones (planned)

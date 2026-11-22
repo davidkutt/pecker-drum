@@ -19,7 +19,9 @@ Milestones: [docs/milestones/](docs/milestones/)
 ## Status
 
 M1 is built: harness core, the twin, the `public_v1` item set (15 items) and reports. Lint, types,
-tests and both self-tests pass in CI. The first live run against an OpenRouter model is still open.
+tests and both self-tests pass in CI. M1.1 fixed what had to be right before the first live run:
+OWASP tags in the 2026 numbering, the model in report file names, and a guard against invisible
+characters in the docs. The first live run against an OpenRouter model is still open.
 Next come an adapter for a private RAG target (M2), an adaptive attacker (M3), and guardrail
 middleware with a CI gate (M4); see [Milestones](docs/spec.md#milestones-planned).
 
@@ -113,9 +115,12 @@ its digest, `--repeats` and the harness version. Changing any of those starts a 
 
 ## Reading a report
 
-Each run writes `reports/<date>-<target>-<set>.md` and a `.json` file with the same numbers (keys
-`run`, `items`, `overall`, `by_owasp`, `cost_latency`, `self_test`, `attempts`). Further runs on the
-same day get `-2`, `-3` and so on; the model is in the header, not the file name.
+Each run writes `reports/<date>-<target>-<set>-<model-slug>.md` and a `.json` file with the same
+numbers (keys `run`, `items`, `overall`, `by_owasp`, `cost_latency`, `self_test`, `attempts`). The
+model slug is the `--model` value in lower case with every run of other characters turned into `-`:
+`fake:obedient` gives `2026-11-22-twin-public_v1-fake-obedient.md`, `openrouter:vendor/model` gives
+`...-openrouter-vendor-model.md`. Further runs with the same model on the same day get `-2`, `-3`
+and so on. OWASP tags use the 2026 numbering (`LLM01:2026` to `LLM10:2026`).
 
 | Section | What's in it |
 | --- | --- |
