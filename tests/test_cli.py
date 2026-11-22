@@ -536,3 +536,316 @@ def test_key_from_env_file_leaks_nowhere(
     texts = [first.out, first.err, second.out, second.err, run_id, *errors, *log_lines]
     for text in texts:
         assert key_leaks(text) == [], text
+
+
+# --- M1.5: advisory judge and drum report. No live calls: fake judges or a mock transport.
+
+
+def report_files(folder: Path) -> list[Path]:
+    return sorted(folder.glob("*.md")) + sorted(folder.glob("*.json"))
+
+
+def without_timestamp(path: Path) -> str:
+    """The report minus its generation timestamp (the one line a re-render may change)."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return "\n".join(
+        line
+        for line in lines
+        if not line.startswith("- Report generated ") and '"generated_at": ' not in line
+    )
+
+
+def run_report(reports: Path, run_id: str, *extra: str) -> int:
+    return main(["report", "--run-id", run_id, "--reports-dir", str(reports), *extra])
+
+
+def json_report(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_fake_judges_label_without_changing_outcomes(
+    tmp_path: Path, mini_fixtures: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    items_dir = write_items(tmp_path, TOOL_ITEM, DOC_ITEM)
+    runs: dict[str, dict[str, Any]] = {}
+    for judge in ("none", "fake:complied", "fake:reported"):
+        reports = tmp_path / judge.replace(":", "-")
+        extra = [] if judge == "none" else ["--judge", judge]
+        code = main(
+            [
+                "run",
+                "--target",
+                "twin",
+                "--set",
+                "demo_v1",
+                "--model",
+                "fake:obedient",
+                "--items-dir",
+                str(items_dir),
+                "--fixtures-dir",
+                str(mini_fixtures),
+                "--reports-dir",
+                str(reports),
+                *extra,
+            ]
+        )
+        assert code == EXIT_OK
+        assert "self-test passed" in capsys.readouterr().out
+        (md, js) = report_files(reports)
+        runs[judge] = json_report(js) | {"markdown": md.read_text(encoding="utf-8")}
+
+    def strict(payload: dict[str, Any]) -> list[tuple[str, int, str]]:
+        return [(a["item_id"], a["attempt"], a["outcome"]) for a in payload["attempts"]]
+
+    assert strict(runs["none"]) == strict(runs["fake:complied"]) == strict(runs["fake:reported"])
+    for key in ("items", "overall"):
+        plain = [{k: v for k, v in row.items() if k != "judge"} for row in _rows(runs["none"][key])]
+        for judge in ("fake:complied", "fake:reported"):
+            judged = [
+                {k: v for k, v in row.items() if k != "judge"} for row in _rows(runs[judge][key])
+            ]
+            assert judged == plain
+    reported = runs["fake:reported"]
+    assert reported["run"]["judge"] == "fake:reported"
+    assert reported["overall"]["judge"]["contained"] == {
+        "attempts": 1,
+        "complied": 0,
+        "reported": 1,
+        "unclear": 0,
+    }
+    assert reported["overall"]["judge"]["success"]["reported"] == 1
+    assert "1 success (judge: 0 complied, 1 reported, 0 unclear)" in reported["markdown"]
+    assert "## Judge disagrees (2)" in reported["markdown"]
+    assert (
+        "1 success (judge: 1 complied, 0 reported, 0 unclear)" in runs["fake:complied"]["markdown"]
+    )
+    assert "## Judge disagrees (0)" in runs["fake:complied"]["markdown"]
+    assert runs["none"]["run"]["judge"] == ""
+    assert len({payload["run"]["run_id"] for payload in runs.values()}) == 3
+
+
+def _rows(value: Any) -> list[dict[str, Any]]:
+    return value if isinstance(value, list) else [value]
+
+
+@pytest.mark.parametrize("judge", [None, "fake:reported"])
+def test_report_rebuilds_a_run_byte_for_byte_without_the_target(
+    tmp_path: Path,
+    mini_fixtures: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    judge: str | None,
+) -> None:
+    items_dir = write_items(tmp_path, TOOL_ITEM, DOC_ITEM)
+    extra = ["--judge", judge] if judge else []
+    assert run(tmp_path, mini_fixtures, items_dir, "--model", "fake:obedient", *extra) == EXIT_OK
+    reports = tmp_path / "reports"
+    first_md, first_js = report_files(reports)  # one .md, then one .json
+    run_id = json_report(first_js)["run"]["run_id"]
+    capsys.readouterr()
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        msg = "drum report must not build or call the target"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(cli, "TwinTarget", forbidden)
+    monkeypatch.setattr(cli, "run_campaign", forbidden)
+    assert run_report(reports, run_id) == EXIT_OK
+    assert f"re-rendered from {reports}/.runs/{run_id}.json" in capsys.readouterr().out
+    md2 = first_md.with_name(first_md.stem + "-2.md")
+    js2 = first_js.with_name(first_js.stem + "-2.json")
+    assert sorted(report_files(reports)) == sorted([first_md, first_js, md2, js2])
+    assert without_timestamp(md2) == without_timestamp(first_md)
+    assert without_timestamp(js2) == without_timestamp(first_js)
+    assert "- Report generated " in md2.read_text(encoding="utf-8")
+
+
+def test_report_can_add_a_judge_to_a_finished_run(
+    tmp_path: Path, mini_fixtures: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    items_dir = write_items(tmp_path, TOOL_ITEM, DOC_ITEM)
+    assert run(tmp_path, mini_fixtures, items_dir, "--model", "fake:obedient") == EXIT_OK
+    reports = tmp_path / "reports"
+    (_, original) = report_files(reports)
+    before = json_report(original)
+    assert run_report(reports, before["run"]["run_id"], "--judge", "fake:complied") == EXIT_OK
+    assert "judge fake:complied (advisory)" in capsys.readouterr().out
+    after = json_report(sorted(reports.glob("*-2.json"))[0])
+    assert after["run"]["run_id"] == before["run"]["run_id"]  # the source run
+    assert after["run"]["judge"] == "fake:complied"
+    assert [a["outcome"] for a in after["attempts"]] == [a["outcome"] for a in before["attempts"]]
+    assert {a["judge"]["label"] for a in after["attempts"] if a["judge"]} == {"complied"}
+    record = json.loads((reports / ".runs" / f"{before['run']['run_id']}.json").read_text())
+    assert record["info"]["judge"] == ""  # re-rendering never writes the record
+
+
+def test_report_errors_say_what_to_do(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    reports = tmp_path / "reports"
+    assert run_report(reports, "../../etc/passwd") == EXIT_USAGE
+    assert "a run id is 16 hex characters" in capsys.readouterr().err
+    run_id = "0123456789abcdef"
+    assert run_report(reports, run_id) == EXIT_USAGE
+    assert (
+        "runs that finished before M1.5 keep no record, so run it again" in capsys.readouterr().err
+    )
+    (reports / ".checkpoints").mkdir(parents=True)
+    (reports / ".checkpoints" / f"{run_id}.sqlite").write_bytes(b"")
+    assert run_report(reports, run_id) == EXIT_USAGE
+    assert f"run {run_id} has not finished: resume it" in capsys.readouterr().err
+    assert run_report(reports, run_id, "--concurrency", "0") == EXIT_USAGE
+
+
+def test_report_names_attempts_without_a_full_answer(
+    tmp_path: Path, mini_fixtures: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    items_dir = write_items(tmp_path, TOOL_ITEM, DOC_ITEM)
+    assert run(tmp_path, mini_fixtures, items_dir, "--model", "fake:obedient") == EXIT_OK
+    reports = tmp_path / "reports"
+    (record_path,) = (reports / ".runs").glob("*.json")
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    for result in record["results"]:
+        result["answer"] = None  # what an attempt resumed from a pre-M1.5 checkpoint looks like
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    capsys.readouterr()
+    assert run_report(reports, record["info"]["run_id"], "--judge", "fake:complied") == EXIT_OK
+    assert "2 of 2 attempts in run" in capsys.readouterr().err
+    (md,) = reports.glob("*-2.md")
+    text = md.read_text(encoding="utf-8")
+    assert text.count("_Full answer not recorded (attempt from before M1.5)._") == 2
+    assert "judge unclear: `full answer not recorded (attempt from before M1.5)`" in text
+
+
+@pytest.mark.parametrize(
+    ("judge", "code"),
+    [
+        ("fake:reported", EXIT_OK),
+        ("fake:complied", EXIT_OK),
+        ("openrouter", EXIT_USAGE),
+        ("openrouter:", EXIT_USAGE),
+        ("gpt-judge", EXIT_USAGE),
+    ],
+)
+def test_fake_or_malformed_judges_never_open_env_file(
+    env_dir: Path,
+    mini_fixtures: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    judge: str,
+    code: int,
+) -> None:
+    write_env(env_dir, f"OPENROUTER_API_KEY={FAKE_KEY}\nDRUM_OPENROUTER_MODEL=vendor/x\n")
+    blocked: list[bool] = []
+    monkeypatch.setattr(cli, "block_network", lambda: blocked.append(True))
+    items_dir = write_items(env_dir, DOC_ITEM)
+    _ENV_OPENS.clear()
+    _WATCHING.append(True)
+    try:
+        result = run(
+            env_dir, mini_fixtures, items_dir, "--model", "fake:obedient", "--judge", judge
+        )
+    finally:
+        _WATCHING.clear()
+    assert result == code
+    assert _ENV_OPENS == []
+    assert "OPENROUTER_API_KEY" not in os.environ
+    if code == EXIT_OK:
+        assert blocked == [True]  # fake model and fake judge: offline
+    else:
+        assert "unknown judge" in capsys.readouterr().err
+
+
+def test_openrouter_judge_opens_env_file_and_allows_the_network(
+    env_dir: Path,
+    mini_fixtures: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    write_env(env_dir, "DRUM_OPENROUTER_MODEL=vendor/x\n")  # no key: stops before any call
+    blocked: list[bool] = []
+    monkeypatch.setattr(cli, "block_network", lambda: blocked.append(True))
+    items_dir = write_items(env_dir, DOC_ITEM)
+    _ENV_OPENS.clear()
+    _WATCHING.append(True)
+    try:
+        result = run(
+            env_dir,
+            mini_fixtures,
+            items_dir,
+            "--model",
+            "fake:obedient",
+            "--judge",
+            "openrouter:v/j",
+        )
+    finally:
+        _WATCHING.clear()
+    assert result == EXIT_USAGE
+    assert _ENV_OPENS
+    assert blocked == []  # a live judge is a live run
+    assert "OPENROUTER_API_KEY is not set (put it in .env" in capsys.readouterr().err
+
+
+def judge_reply(content: str) -> httpx.Response:
+    return httpx.Response(200, json=completion(content) | {"model": "vendor/judge-model"})
+
+
+@pytest.mark.filterwarnings(
+    "ignore:coroutine 'AsyncSqliteSaver.aput_writes' was never awaited:RuntimeWarning"
+)
+def test_key_never_leaks_through_an_openrouter_judge(
+    env_dir: Path,
+    mini_fixtures: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Fake target, OpenRouter judge on a mock transport, key from .env: run, then re-render."""
+    caplog.set_level(logging.DEBUG)
+    write_env(env_dir, f"OPENROUTER_API_KEY={FAKE_KEY}\n")
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return judge_reply("this is not json")  # becomes unclear
+        return judge_reply(json.dumps({"label": "reported", "reason": "It warned the user."}))
+
+    def local_judge_model(
+        model_id: str,
+        *,
+        http_async_client: httpx.AsyncClient | None = None,
+        temperature: float | None = None,
+        provider_extra: dict[str, object] | None = None,
+    ) -> ChatOpenAI:
+        # The real factory (key from the environment, judge settings), local transport only.
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        return openrouter_model(
+            model_id,
+            http_async_client=client,
+            temperature=temperature,
+            provider_extra=provider_extra,
+        )
+
+    monkeypatch.setattr("pecker_drum.judge.core.openrouter_model", local_judge_model)
+    items_dir = write_items(env_dir, TOOL_ITEM, DOC_ITEM)
+    judge = ("--judge", "openrouter:vendor/judge-model")
+    assert run(env_dir, mini_fixtures, items_dir, "--model", "fake:obedient", *judge) == EXIT_OK
+    first = capsys.readouterr()
+    (js,) = (env_dir / "reports").glob("*.json")
+    payload = json_report(js)
+    run_id = payload["run"]["run_id"]
+    assert payload["run"]["judge"] == "openrouter:vendor/judge-model"
+    labels = sorted(a["judge"]["label"] for a in payload["attempts"] if a["judge"])
+    assert labels == ["reported", "unclear"]
+    assert run_report(env_dir / "reports", run_id, *judge) == EXIT_OK
+    second = capsys.readouterr()
+
+    assert len(requests) == 4  # two judged attempts, twice
+    assert {r.headers["authorization"] for r in requests} == {f"Bearer {FAKE_KEY}"}
+    written = [p for p in env_dir.rglob("*") if p.is_file() and p.name != ".env"]
+    assert any(p.parent.name == ".runs" for p in written)
+    for path in written:
+        assert key_leaks(path.read_bytes()) == [], path
+    formatter = logging.Formatter("%(name)s %(levelname)s %(message)s")
+    log_lines = [formatter.format(record) for record in caplog.records]
+    for text in [first.out, first.err, second.out, second.err, run_id, *log_lines]:
+        assert key_leaks(text) == [], text
