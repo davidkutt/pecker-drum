@@ -194,8 +194,14 @@ def openrouter_model(
     api_key: str | None = None,
     http_async_client: httpx.AsyncClient | None = None,
     timeout_s: float = 120.0,
+    temperature: float | None = None,
+    provider_extra: Mapping[str, object] | None = None,
 ) -> ChatOpenAI:
-    """An OpenRouter chat model that only routes to zero-data-retention endpoints."""
+    """An OpenRouter chat model that only routes to zero-data-retention endpoints.
+
+    ``provider_extra`` adds routing preferences (the judge sets ``require_parameters``); it can
+    never switch zero data retention off.
+    """
     key = api_key if api_key is not None else os.environ.get(OPENROUTER_KEY_ENV)
     if not key:
         msg = (
@@ -210,7 +216,11 @@ def openrouter_model(
         timeout=timeout_s,
         max_retries=2,
         use_responses_api=False,
-        extra_body={"provider": dict(ZDR_PROVIDER_PREFS), "usage": {"include": True}},
+        temperature=temperature,
+        extra_body={
+            "provider": {**(provider_extra or {}), **ZDR_PROVIDER_PREFS},
+            "usage": {"include": True},
+        },
         http_async_client=http_async_client,
     )
     assert_zdr(model)
