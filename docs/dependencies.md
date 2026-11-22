@@ -25,6 +25,7 @@ Development dependencies:
 | `pytest` | MIT | Tests |
 | `pytest-asyncio` | Apache-2.0 | Async tests |
 | `httpx` | BSD-3-Clause | Mock transport for the OpenRouter request test (also a transitive runtime dependency) |
+| `markdown-it-py` | MIT | Renders reports in tests to prove hostile full answers stay inert (M1.5); pulls in `mdurl` (MIT) |
 
 ## Transitive MPL-2.0 dependencies (allowed, ADR 0005)
 

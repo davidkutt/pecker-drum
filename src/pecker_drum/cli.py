@@ -1,4 +1,9 @@
-"""Command line: ``drum run --target twin --set <set> --model <mode> --repeats <k>``."""
+"""Command line.
+
+- ``drum run --target twin --set <set> --model <mode> [--judge <judge>] --repeats <k>``
+- ``drum report --run-id <id> [--judge <judge>]``: rebuild a finished run's reports from its run
+  record, without calling the target (M1.5).
+"""
 
 from __future__ import annotations
 
@@ -8,16 +13,20 @@ import os
 import sys
 import warnings
 from collections.abc import Sequence
+from datetime import date
 from pathlib import Path
 
 from pecker_drum import __version__
-from pecker_drum.campaign.graph import CampaignConfig, CampaignResult, run_campaign
+from pecker_drum.campaign.graph import CampaignConfig, run_campaign, utc_now
+from pecker_drum.campaign.record import RunRecord, RunRecordError, read_record
 from pecker_drum.campaign.selftest import self_test_check
 from pecker_drum.envfile import EnvFileError, EnvFileResult, load_env_file
 from pecker_drum.grading.links import DEFAULT_ALLOWED_HOSTS
 from pecker_drum.items.loader import ItemSetError, resolve_set_path
+from pecker_drum.judge import Judge, JudgeSpec, judge_result, make_judge, parse_judge_spec
 from pecker_drum.netguard import block_network
-from pecker_drum.report.render import pct
+from pecker_drum.report.render import Report, build_report, pct, write_report
+from pecker_drum.results import AttemptResult
 from pecker_drum.targets.twin import TwinSettings, TwinTarget
 from pecker_drum.twin.embeddings import EmbedderName
 from pecker_drum.twin.fixtures import FixtureError
@@ -39,7 +48,12 @@ EXIT_USAGE = 2
 EXIT_INTERRUPTED = 130
 
 ENV_FILE = Path(".env")
-"""Read from the working directory, and only when ``--model`` asks for OpenRouter (ADR 0007)."""
+"""Read from the working directory, and only when ``--model`` or ``--judge`` asks for OpenRouter
+(ADR 0007, ADR 0008)."""
+JUDGE_HELP = (
+    "advisory judge for success and contained attempts: fake:complied, fake:reported or "
+    "openrouter:<model id>; never changes an outcome"
+)
 LIVE_SETTINGS = (OPENROUTER_KEY_ENV, OPENROUTER_MODEL_ENV)
 """The only names taken from ``.env``."""
 
@@ -63,6 +77,7 @@ def _parser() -> argparse.ArgumentParser:
             f"{OPENROUTER_MODEL_ENV} (environment or .env)"
         ),
     )
+    run.add_argument("--judge", default=None, metavar="JUDGE", help=JUDGE_HELP)
     run.add_argument("--repeats", type=int, default=1, help="attempts per item (k), default 1")
     run.add_argument("--concurrency", type=int, default=4, help="parallel attempts, default 4")
     run.add_argument(
@@ -82,16 +97,23 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--items-dir", type=Path, default=Path("items"))
     run.add_argument("--fixtures-dir", type=Path, default=Path("fixtures"))
     run.add_argument("--reports-dir", type=Path, default=Path("reports"))
+    report = commands.add_parser(
+        "report",
+        help="rebuild the reports of a finished run from its run record (no target calls)",
+        allow_abbrev=False,
+    )
+    report.add_argument("--run-id", required=True, help="the run id from the report header")
+    report.add_argument("--judge", default=None, metavar="JUDGE", help=JUDGE_HELP)
+    report.add_argument("--concurrency", type=int, default=4, help="parallel judge calls")
+    report.add_argument("--reports-dir", type=Path, default=Path("reports"))
     return parser
 
 
-def _print_summary(result: CampaignResult) -> None:
-    report = result.report
-    print(
-        f"run {result.run_id}: {report.info.target} / {report.info.item_set} / {report.info.model}"
-    )
-    if result.resumed:
-        print(f"resumed from checkpoint: {result.already_done} attempts were already done")
+def _print_summary(report: Report, paths: tuple[Path, Path], notes: Sequence[str] = ()) -> None:
+    info = report.info
+    print(f"run {info.run_id}: {info.target} / {info.item_set} / {info.model}")
+    for note in notes:
+        print(note)
     print()
     print(f"{'item':<10} {'success':>7} {'contained':>9} {'blocked':>7} {'error':>5}")
     for stat in report.stats:
@@ -107,6 +129,12 @@ def _print_summary(result: CampaignResult) -> None:
         f"({overall.successes}/{overall.attempts} attempts, {overall.contained} contained, "
         f"{overall.errors} errors)"
     )
+    if report.judge_overall is not None:
+        tally = report.judge_overall
+        print(
+            f"judge {info.judge} (advisory): {tally.success.text('success')}; "
+            f"{tally.contained.text('contained')}"
+        )
     if report.self_test:
         failed = [row for row in report.self_test if not row.ok]
         verdict = "passed" if not failed else f"FAILED for {len(failed)} items"
@@ -117,8 +145,8 @@ def _print_summary(result: CampaignResult) -> None:
                 f"missing {', '.join(row.missing) or '-'}"
             )
     print()
-    print(f"report: {result.report_paths[0]}")
-    print(f"        {result.report_paths[1]}")
+    print(f"report: {paths[0]}")
+    print(f"        {paths[1]}")
 
 
 def _warn_about_env_file(result: EnvFileResult) -> None:
@@ -140,22 +168,35 @@ def _warn_about_env_file(result: EnvFileResult) -> None:
         )
 
 
-def _model_spec(value: str) -> ModelSpec:
-    """Resolve ``--model``. Only ``openrouter`` and ``openrouter:<id>`` open ``.env`` (ADR 0007)."""
-    if not asks_for_openrouter(value):
-        return parse_model_spec(value)  # a fake model or an error: .env is never opened
-    explicit = parse_model_spec(value) if value != "openrouter" else None  # syntax first
-    loaded = load_env_file(ENV_FILE, LIVE_SETTINGS)
-    _warn_about_env_file(loaded)
-    spec = explicit or openrouter_spec_from_env(os.environ)
-    refuse_key_as_model_id(spec, os.environ)
-    if explicit is None:
+def _resolve(
+    model_value: str | None, judge_value: str | None
+) -> tuple[ModelSpec | None, JudgeSpec | None]:
+    """Parse ``--model`` and ``--judge``. ``.env`` is opened only when one of them asks for
+    OpenRouter (ADR 0007, extended by ADR 0008); syntax errors stop the run before that."""
+    judge = parse_judge_spec(judge_value) if judge_value is not None else None
+    explicit = (
+        parse_model_spec(model_value)
+        if model_value is not None and model_value != "openrouter"
+        else None
+    )
+    wants_model_env = model_value is not None and asks_for_openrouter(model_value)
+    loaded = EnvFileResult()
+    if wants_model_env or (judge is not None and not judge.is_fake):
+        loaded = load_env_file(ENV_FILE, LIVE_SETTINGS)
+        _warn_about_env_file(loaded)
+    spec = openrouter_spec_from_env(os.environ) if model_value == "openrouter" else explicit
+    # Refuse a key-shaped id before anything prints it (M1.4 leak rule).
+    if spec is not None:
+        refuse_key_as_model_id(spec, os.environ)
+    if judge is not None and not judge.is_fake:
+        refuse_key_as_model_id(ModelSpec("openrouter", judge.model_id), os.environ)
+    if model_value == "openrouter" and spec is not None:
         source = ENV_FILE if OPENROUTER_MODEL_ENV in loaded.loaded else "the environment"
         print(
             f"drum: --model openrouter uses {spec} ({OPENROUTER_MODEL_ENV} from {source})",
             file=sys.stderr,
         )
-    return spec
+    return spec, judge
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -167,12 +208,14 @@ def _run(args: argparse.Namespace) -> int:
         return EXIT_USAGE
     try:
         set_path = resolve_set_path(args.item_set, args.items_dir)
-        spec = _model_spec(args.model)
+        spec, judge_spec = _resolve(args.model, args.judge)
     except (ModelSpecError, ItemSetError, EnvFileError) as exc:
         print(f"drum: {exc}", file=sys.stderr)
         return EXIT_USAGE
-    if spec.is_fake:
-        block_network()  # the self-test must never reach the network
+    if spec is None:  # pragma: no cover - argparse requires --model
+        return EXIT_USAGE
+    if spec.is_fake and (judge_spec is None or judge_spec.is_fake):
+        block_network()  # the self-test (and a fake judge) must never reach the network
     embedder: EmbedderName
     if args.embedder == "auto":
         embedder = "hash" if spec.is_fake else "fastembed"
@@ -184,6 +227,7 @@ def _run(args: argparse.Namespace) -> int:
     )
     try:
         target = TwinTarget(settings)
+        judge = make_judge(judge_spec) if judge_spec is not None else None
     except (MissingApiKeyError, FixtureError) as exc:
         print(f"drum: {exc}", file=sys.stderr)
         return EXIT_USAGE
@@ -194,6 +238,7 @@ def _run(args: argparse.Namespace) -> int:
         reports_dir=args.reports_dir,
         fresh=args.fresh,
         self_test=self_test_check(spec, target.grading_context) if spec.is_fake else None,
+        judge=judge,
     )
     try:
         result = asyncio.run(run_campaign(target, config))
@@ -203,8 +248,68 @@ def _run(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return EXIT_INTERRUPTED
-    _print_summary(result)
+    notes = (
+        [f"resumed from checkpoint: {result.already_done} attempts were already done"]
+        if result.resumed
+        else []
+    )
+    _print_summary(result.report, result.report_paths, notes)
     if result.report.self_test and not result.report.self_test_passed:
+        return EXIT_SELF_TEST_FAILED
+    return EXIT_OK
+
+
+async def _rejudge(judge: Judge, record: RunRecord, concurrency: int) -> tuple[AttemptResult, ...]:
+    items = {item.id: item for item in record.items}
+    limit = asyncio.Semaphore(concurrency)
+
+    async def one(result: AttemptResult) -> AttemptResult:
+        item = items.get(result.item_id)
+        if item is None:  # pragma: no cover - a record always holds its items
+            return result
+        async with limit:
+            return await judge_result(judge, item, result)
+
+    return tuple(await asyncio.gather(*(one(result) for result in record.results)))
+
+
+def _report(args: argparse.Namespace) -> int:
+    """Rebuild a finished run's reports from its run record; the target is never called."""
+    if args.concurrency < 1:
+        print("drum: --concurrency must be at least 1", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        record = read_record(args.reports_dir, args.run_id)
+        _, judge_spec = _resolve(None, args.judge)
+    except (RunRecordError, ModelSpecError, EnvFileError) as exc:
+        print(f"drum: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    if judge_spec is None or judge_spec.is_fake:
+        block_network()
+    if record.missing_answers:
+        print(
+            f"drum: warning: {record.missing_answers} of {len(record.results)} attempts in run "
+            f"{record.info.run_id} have no full answer (recorded before M1.5); run it again for "
+            "full answers",
+            file=sys.stderr,
+        )
+    try:
+        judge = make_judge(judge_spec) if judge_spec is not None else None
+    except MissingApiKeyError as exc:
+        print(f"drum: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    info, results = record.info, record.results
+    if judge is not None:
+        try:
+            results = asyncio.run(_rejudge(judge, record, args.concurrency))
+        except KeyboardInterrupt:
+            print("\ninterrupted: nothing was written", file=sys.stderr)
+            return EXIT_INTERRUPTED
+        info = info.model_copy(update={"judge": judge.name})
+    report = build_report(info, record.items, results, record.self_test, generated_at=utc_now())
+    paths = write_report(report, args.reports_dir, date.today())
+    _print_summary(report, paths, [f"re-rendered from {args.reports_dir}/.runs/{info.run_id}.json"])
+    if report.self_test and not report.self_test_passed:
         return EXIT_SELF_TEST_FAILED
     return EXIT_OK
 
@@ -215,6 +320,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "run":
         return _run(args)
+    if args.command == "report":
+        return _report(args)
     return EXIT_USAGE  # pragma: no cover - argparse enforces the subcommand
 
 

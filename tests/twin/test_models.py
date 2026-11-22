@@ -165,3 +165,19 @@ def test_assert_zdr_refuses_models_without_it() -> None:
     model.extra_body = {"provider": {"zdr": False}}
     with pytest.raises(RuntimeError, match="zdr"):
         assert_zdr(model)
+
+
+def test_provider_extras_never_switch_zero_data_retention_off() -> None:
+    model = openrouter_model(
+        "vendor/model-x",
+        api_key="test-key",
+        temperature=0.0,
+        provider_extra={"zdr": False, "data_collection": "allow", "require_parameters": True},
+    )
+    assert model.extra_body is not None
+    assert model.extra_body["provider"] == {
+        "zdr": True,
+        "data_collection": "deny",
+        "require_parameters": True,
+    }
+    assert model.temperature == 0.0

@@ -29,3 +29,27 @@ def test_markdown_image_is_inert_inside_code_span() -> None:
     span = code_span(escape_excerpt("![x](https://img.example/p?d=CANARY-0000000000aa)"))
     assert span == "`![x](https://img.example/p?d=CANARY-0000000000aa)`"
     assert code_span("") == ""
+
+
+def test_full_answer_keeps_line_breaks_and_escapes_the_rest() -> None:
+    from pecker_drum.report.excerpt import escape_answer
+
+    zwsp = b"\\u200b".decode("unicode_escape")
+    text = f"line 1\r\nline 2\twith {zwsp} and \\u200b typed, ```code``` | pipe"
+    escaped = escape_answer(text)
+    assert escaped == "line 1\\r\nline 2\\twith \\u200b and \\\\u200b typed, ```code``` | pipe"
+    assert zwsp not in escaped
+    long = "x" * 5000
+    assert escape_answer(long) == long  # uncut
+
+
+def test_fence_is_longer_than_any_backtick_run() -> None:
+    from pecker_drum.report.excerpt import fenced_block
+
+    assert fenced_block("plain") == "```\nplain\n```"
+    assert fenced_block("a ``` b").startswith("````\n")
+    block = fenced_block("x\n``````````\ny")  # a run of ten
+    fence = "`" * 11
+    assert block.startswith(fence + "\n")
+    assert block.endswith("\n" + fence)
+    assert block.count(fence) == 2
