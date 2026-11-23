@@ -95,25 +95,52 @@ def test_stub_self_test_matches_the_twin(
     assert md.name.endswith(f"-stub-public_v1-example-api-{slug}.md")
 
 
-def test_stub_run_without_reports_dir_writes_under_private_reports(
+def test_stub_run_without_reports_dir_writes_under_reports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """The stand-in's data is public: its reports and run record go to reports/."""
     monkeypatch.chdir(tmp_path)
     args = ["--target-config", EXAMPLE, "--set", "public_v1", "--model", "fake:obedient"]
     args += ["--vectors", "direct", "--items-dir", ITEMS, "--fixtures-dir", FIXTURES]
     assert run_cli("run", "--target", "stub", *args) == EXIT_OK
-    private = tmp_path / "private" / "reports"
-    report = json_report(private)
+    public = tmp_path / "reports"
+    report = json_report(public)
     run_id = report["run"]["run_id"]
+    assert (public / ".runs" / f"{run_id}.json").is_file()
+    assert len(list(public.glob("*.md"))) == 1
+    assert not (tmp_path / "private").exists()
+    capsys.readouterr()
+
+    assert run_cli("report", "--run-id", run_id) == EXIT_OK
+    assert f"re-rendered from reports/.runs/{run_id}.json" in capsys.readouterr().out
+    assert len(list(public.glob("*.md"))) == 2
+    assert not (tmp_path / "private").exists()
+
+
+def test_private_target_run_without_reports_dir_writes_under_private_reports(
+    lab: Callable[..., Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = lab()
+    monkeypatch.chdir(tmp_path)
+    args = ["run", "--target", "lab", "--target-config", config, "--model", "target"]
+    args += ["--set", "public_v1", "--items-dir", ITEMS, "--fixtures-dir", FIXTURES]
+    assert run_cli(*args, "--vectors", "direct") == EXIT_OK
+    private = tmp_path / "private" / "reports"
+    run_id = json_report(private)["run"]["run_id"]
     assert (private / ".runs" / f"{run_id}.json").is_file()
-    assert len(list(private.glob("*.md"))) == 1
     assert not (tmp_path / "reports").exists()
     capsys.readouterr()
 
-    assert run_cli("report", "--run-id", run_id) == EXIT_OK  # found in private/reports by default
-    assert f"re-rendered from private/reports/.runs/{run_id}.json" in capsys.readouterr().out
-    assert len(list(private.glob("*.md"))) == 2
+    assert run_cli("report", "--run-id", run_id) == EXIT_USAGE  # never read without asking
+    err = capsys.readouterr().err
+    assert f"no finished run {run_id} in reports/.runs" in err
+    assert "add --reports-dir private/reports" in err
     assert not (tmp_path / "reports").exists()
+    assert run_cli("report", "--run-id", run_id, "--reports-dir", "private/reports") == EXIT_OK
+    assert f"re-rendered from private/reports/.runs/{run_id}.json" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -392,10 +419,14 @@ def test_run_id_does_not_depend_on_password_values(
     assert json_report(tmp_path / "b")["run"]["run_id"] == first
 
 
-def test_report_searches_reports_then_private_reports(
+def test_report_reads_only_reports_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.chdir(tmp_path)
     assert run_cli("report", "--run-id", "0123456789abcdef") == EXIT_USAGE
     err = capsys.readouterr().err
-    assert "no finished run 0123456789abcdef in reports/.runs or private/reports/.runs" in err
+    assert "no finished run 0123456789abcdef in reports/.runs:" in err
+    assert "private/reports/.runs" not in err
+    assert "add --reports-dir private/reports" in err
+    assert run_cli("report", "--run-id", "0123456789abcdef", "--reports-dir", "x") == EXIT_USAGE
+    assert "--reports-dir private/reports" not in capsys.readouterr().err  # asked for x

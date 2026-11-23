@@ -2,11 +2,12 @@
 
 - ``drum run --target twin --set <set> --model <mode> [--judge <judge>] --repeats <k>``
 - ``drum run --target stub --set <set> --model fake:obedient|fake:safe``: the stand-in server
-  (M2) with ``docs/examples/http-target.toml``.
+  (M2) with ``docs/examples/http-target.toml``. Its data is public: reports go to ``reports/``.
 - ``drum run --target <name> --set <set> --model target``: a private HTTP target configured in
   ``private/targets/<name>.toml`` (M2). Reports go to ``private/reports/``.
 - ``drum report --run-id <id> [--judge <judge>]``: rebuild a finished run's reports from its run
-  record, without calling the target (M1.5).
+  record, without calling the target (M1.5). It reads ``reports/``; a private run needs
+  ``--reports-dir private/reports``, which the agents' gate blocks.
 - ``drum cleanup --target <name> --run-id <id>``: delete documents a run left on an HTTP target.
 """
 
@@ -32,7 +33,12 @@ from pecker_drum.campaign.graph import (
     run_campaign,
     utc_now,
 )
-from pecker_drum.campaign.record import RunRecord, RunRecordError, find_record, read_record
+from pecker_drum.campaign.record import (
+    RunRecord,
+    RunRecordError,
+    RunRecordNotFoundError,
+    read_record,
+)
 from pecker_drum.campaign.selftest import self_test_check
 from pecker_drum.envfile import EnvFileError, EnvFileResult, load_env_file
 from pecker_drum.grading.links import DEFAULT_ALLOWED_HOSTS
@@ -90,7 +96,9 @@ EXAMPLE_CONFIG = Path("docs/examples/http-target.toml")
 PRIVATE_TARGETS = Path("private/targets")
 PUBLIC_REPORTS = Path("reports")
 PRIVATE_REPORTS = Path("private/reports")
-"""HTTP targets write here by default: reports and run records hold the target's answers."""
+"""Private HTTP targets write here by default: reports and run records hold the target's answers.
+``drum report`` reads it only when ``--reports-dir`` names it, so the path is always on the
+command line where a gate can see it."""
 _TARGET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,63}")
 _RUN_ID = re.compile(r"[0-9a-f]{16}")
 
@@ -112,7 +120,8 @@ CONFIG_HELP = (
     "docs/examples/http-target.toml)"
 )
 REPORTS_HELP = (
-    "where reports go (default: reports/ for the twin, private/reports/ for HTTP targets)"
+    "where reports go (default: reports/ for the twin and the stand-in, private/reports/ for a "
+    "private HTTP target)"
 )
 
 
@@ -178,7 +187,7 @@ def _parser() -> argparse.ArgumentParser:
         "--reports-dir",
         type=Path,
         default=None,
-        help="where the run record is (default: reports/, then private/reports/)",
+        help="where the run record is (default: reports/; a private run: private/reports)",
     )
     cleanup = commands.add_parser(
         "cleanup",
@@ -550,7 +559,7 @@ def _run_http_target(
         set_path=set_path,
         repeats=args.repeats,
         concurrency=concurrency,
-        reports_dir=args.reports_dir or PRIVATE_REPORTS,
+        reports_dir=args.reports_dir or (PUBLIC_REPORTS if stub else PRIVATE_REPORTS),
         fresh=args.fresh,
         self_test=self_test_check(spec, target.grading_context) if spec is not None else None,
         judge=judge,
@@ -664,13 +673,21 @@ def _report(args: argparse.Namespace) -> int:
     if args.concurrency < 1:
         print("drum: --concurrency must be at least 1", file=sys.stderr)
         return EXIT_USAGE
+    # Only reports/ by default: a private run's record is read only when the command line names
+    # private/reports, so a gate sees it and an agent session never prints private results.
+    reports_dir: Path = args.reports_dir or PUBLIC_REPORTS
     try:
-        if args.reports_dir is None:
-            # Twin runs keep their records in reports/, HTTP runs in private/reports/ (M2).
-            reports_dir, record = find_record((PUBLIC_REPORTS, PRIVATE_REPORTS), args.run_id)
-        else:
-            reports_dir, record = args.reports_dir, read_record(args.reports_dir, args.run_id)
+        record = read_record(reports_dir, args.run_id)
         _, judge_spec = _resolve(None, args.judge)
+    except RunRecordNotFoundError as exc:
+        print(f"drum: {exc}", file=sys.stderr)
+        if args.reports_dir is None:
+            print(
+                f"drum: a private HTTP target keeps its records in {PRIVATE_REPORTS}/: add "
+                f"--reports-dir {PRIVATE_REPORTS}",
+                file=sys.stderr,
+            )
+        return EXIT_USAGE
     except (RunRecordError, ModelSpecError, EnvFileError) as exc:
         print(f"drum: {exc}", file=sys.stderr)
         return EXIT_USAGE

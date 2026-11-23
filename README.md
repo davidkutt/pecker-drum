@@ -229,8 +229,14 @@ uv run drum run --target myapp --model target --set private/sets/myapp_v1.jsonl 
 ```
 
 `--model target` says the target runs its own model; the config's `label` names it in the report
-file names. Reports, run records and checkpoints of HTTP targets go to `private/reports/`, because
-they hold the target's full answers; `drum report --run-id` finds them there.
+file names. Reports, run records and checkpoints of a private target go to `private/reports/`,
+because they hold the target's full answers (the stand-in's go to `reports/`). `drum report
+--run-id` reads `reports/` unless told otherwise, so re-render a private run with
+`--reports-dir private/reports` (identical in bash and fish):
+
+```bash
+uv run drum report --run-id 0123456789abcdef --reports-dir private/reports
+```
 
 Before the first attempt every user logs in, and the run refuses to start while any planted
 document (`drum-fixture-<run id>` in its file name) is still on the target. Every run ends by
@@ -260,12 +266,12 @@ as a 429 from a rate limit or a cost cap is recorded with its status code; nothi
 | `--allow-host HOST` | `twin.example`, `*.twin.example` | Hosts that links and images may point to without counting as an attack; repeatable, replaces the default (an HTTP target's default: `grading.allowed_hosts`, else the host of `base_url`) |
 | `--judge JUDGE` | none | Advisory judge: `fake:complied`, `fake:reported` or `openrouter:<model id>`; labels success and contained attempts, never changes an outcome |
 | `--fresh` | off | Discard an unfinished checkpoint and start over |
-| `--reports-dir DIR` | `reports`, or `private/reports` for HTTP targets | Where reports, checkpoints and run records go |
+| `--reports-dir DIR` | `reports`, or `private/reports` for a private HTTP target | Where reports, checkpoints and run records go |
 | `--items-dir`, `--fixtures-dir` | `items`, `fixtures` | Where item sets and fixtures are read from |
 
 `drum report` takes `--run-id`, `--judge`, `--concurrency` (parallel judge calls) and
-`--reports-dir` (default: `reports`, then `private/reports`). `drum cleanup` takes `--target`,
-`--target-config` and `--run-id`.
+`--reports-dir` (default: `reports`; a private run needs `--reports-dir private/reports`).
+`drum cleanup` takes `--target`, `--target-config` and `--run-id`.
 
 Exit codes: `0` done, `1` self-test failed, `2` usage error (unknown target, bad model or judge,
 missing key, model id or password, no run record, items the target can't run), `3` a safety cap or
@@ -285,14 +291,15 @@ run planted before the command exits.
 
 ## Reading a report
 
-Each run writes `reports/<date>-<target>-<set>-<model-slug>.md` (HTTP targets:
+Each run writes `reports/<date>-<target>-<set>-<model-slug>.md` (the stand-in:
+`reports/<date>-stub-<set>-<label>-<mode>.md`; a private HTTP target:
 `private/reports/<date>-<target>-<set>-<label>.md`) and a `.json` file with the same numbers (keys
 `run`, `generated_at`, `items`, `overall`, `by_owasp`, `cost_latency`, `self_test`,
 `judge_disagreements`, `judge_unclear`, `contradictions`, `attempts`; every attempt carries its
 full `answer` and, with a judge, its `judge` label). Every group in `overall` and `by_owasp` names
-its interval method in `asr1_method` and `asrk_method`
-(`zero_bound`, `all_bound`, `bootstrap` or `wilson`). The model slug is the `--model` value in lower
-case with every run of other characters turned into `-`: `fake:obedient` gives
+its interval method in `asr1_method` and `asrk_method` (`zero_bound`, `all_bound`, `bootstrap` or
+`wilson`). The model slug is the `--model` value in lower case with every run of other characters
+turned into `-`: `fake:obedient` gives
 `2026-11-22-twin-public_v1-fake-obedient.md`, `openrouter:vendor/model` gives
 `...-openrouter-vendor-model.md`. Further runs with the same model on the same day get `-2`, `-3`
 and so on. OWASP tags use the 2026 numbering (`LLM01:2026` to `LLM10:2026`).

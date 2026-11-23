@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -29,6 +28,10 @@ _RUN_ID = re.compile(r"[0-9a-f]{16}")
 
 class RunRecordError(RuntimeError):
     """No usable record for a run id. The message says what to do next."""
+
+
+class RunRecordNotFoundError(RunRecordError):
+    """Neither a record nor a checkpoint for the run id in that reports directory."""
 
 
 class RunRecord(BaseModel):
@@ -75,26 +78,10 @@ def read_record(reports_dir: Path, run_id: str) -> RunRecord:
                 f"no finished run {run_id} in {reports_dir / RUNS_DIR}: runs that finished before "
                 "M1.5 keep no record, so run it again"
             )
+            raise RunRecordNotFoundError(msg)
         raise RunRecordError(msg)
     try:
         return RunRecord.model_validate_json(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, ValidationError):
         msg = f"the run record {path} cannot be read; run it again"
         raise RunRecordError(msg) from None
-
-
-def find_record(reports_dirs: Sequence[Path], run_id: str) -> tuple[Path, RunRecord]:
-    """The first of ``reports_dirs`` that holds a record for ``run_id`` (M2: twin runs in
-    ``reports/``, HTTP runs in ``private/reports/``), and the record."""
-    for reports_dir in reports_dirs:
-        if record_path(reports_dir, run_id).is_file():
-            return reports_dir, read_record(reports_dir, run_id)
-    for reports_dir in reports_dirs:
-        if (reports_dir / CHECKPOINTS_DIR / f"{run_id}.sqlite").is_file():
-            return reports_dir, read_record(reports_dir, run_id)  # raises "has not finished"
-    places = " or ".join(str(d / RUNS_DIR) for d in reports_dirs)
-    msg = (
-        f"no finished run {run_id} in {places}: runs that finished before M1.5 keep no record, "
-        "so run it again"
-    )
-    raise RunRecordError(msg)

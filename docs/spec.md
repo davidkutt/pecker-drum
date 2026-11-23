@@ -284,14 +284,15 @@ Precedence rules (ADR 0007):
   attempts; `--fresh` starts over; a finished run deletes its checkpoint.
 - A maximum wall time or too many errors in a row stop a run (exit 3); the checkpoint keeps every
   finished attempt, and the same command resumes.
-- **Where output goes:** the twin writes to `reports/`; HTTP targets, the stand-in included, write
+- **Where output goes:** the twin and the stand-in write to `reports/`; private HTTP targets write
   reports, checkpoints and run records to `private/reports/` by default, because they hold the
   target's full answers. `--reports-dir` overrides both.
 - **Run record (ADR 0008):** a finished run writes `<reports dir>/.runs/<run id>.json` with the run info,
   the items, every attempt result (full answers included) and the self-test rows. A later run with
   the same run id replaces it. `drum report --run-id <id> [--judge <model>]` rebuilds the reports
-  from it without building or calling the target; without `--reports-dir` it looks in `reports/`,
-  then in `private/reports/`, and writes next to the record it found. Without `--judge` the new
+  from it without building or calling the target. It reads `reports/` unless `--reports-dir`
+  names another directory (a private run: `--reports-dir private/reports`, which the agents' gate
+  blocks) and writes next to the record. Without `--judge` the new
   reports match the
   originals apart from the generation timestamp; with `--judge` the source run id stays and the
   header names the new judge (the record is not changed). Runs finished before M1.5 have no record

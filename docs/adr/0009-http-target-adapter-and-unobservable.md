@@ -136,10 +136,14 @@ which stream shapes to support, transport rules, secrets, and leftovers.
     with a stand-in that echoes the password and the tokens checks that no 8-character piece of
     them reaches a log record, stdout, stderr, a report, a run record, a checkpoint or a run id.
 11. **Reports and the command line.**
-    - HTTP targets, the stand-in included, write reports, run records and checkpoints to
-      `private/reports/` by default, because they hold the target's full answers.
-    - `drum report --run-id` looks in `reports/`, then in `private/reports/`, and writes the
-      re-render next to the record it found.
+    - Private HTTP targets write reports, run records and checkpoints to `private/reports/` by
+      default, because they hold the target's full answers. The stand-in's data is public, so
+      it writes to `reports/` like the twin.
+    - `drum report --run-id` reads `reports/` by default and `private/reports/` only with an
+      explicit `--reports-dir private/reports`, and writes the re-render next to the record.
+      `private/` then always appears on the command line, where the agents' gate blocks it, so
+      an agent session never prints a private run's target, set, item ids or counts. When no
+      record is found, the error names that option (David's decision in the PR #16 review).
     - `--model` stays required (ADR 0007 unchanged). A private target takes `--model target`, and
       its config `label` names it in report file names. The stand-in takes `fake:obedient` or
       `fake:safe`, and its label is the config label plus the mode.
