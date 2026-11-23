@@ -80,3 +80,6 @@ class Observation(_Frozen):
     error: str | None = None
     observed: frozenset[ObservedChannel] = ALL_CHANNELS
     """The channels this target exposes (M2); the twin exposes all of them."""
+    contradictions: tuple[str, ...] = ()
+    """What the target reported against what the harness did (M2, ADR 0009): a call the
+    harness denied that the target reports as executed. The call is graded as executed."""

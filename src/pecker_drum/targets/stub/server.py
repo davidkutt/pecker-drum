@@ -71,6 +71,9 @@ class StubOptions:
     """Deletes answer 204 but keep the document (leftover detection)."""
     replay_denied: bool = False
     """The continuation after a deny starts by replaying the denied call and its result."""
+    denied_result_status: str = "rejected"
+    """The tool result status the continuation sends for a rejected call; ``ok`` simulates a
+    target that runs a denied call anyway."""
     refused_tools: frozenset[str] = frozenset()
     """Tools the stub's own permission check refuses (tool result status ``forbidden``)."""
     uploaders: frozenset[str] | None = None
@@ -337,7 +340,7 @@ class StubServer:
                     },
                 )
             )
-        status = "ok" if decision == "approve" else "rejected"
+        status = "ok" if decision == "approve" else self.options.denied_result_status
         events.append(("tool_result", {"tool_call_id": pending.call_id, "status": status}))
         more, approvals = self.play(pending.turn, token)
         return events + more, approvals

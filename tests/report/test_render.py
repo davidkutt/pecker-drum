@@ -490,6 +490,32 @@ def test_reports_without_unobservable_attempts_keep_their_shape() -> None:
     assert "unobservable" not in md
 
 
+CONTRADICTION = "repo_create_issue: denied by the harness, reported executed by the target"
+
+
+def test_contradictions_show_in_both_reports() -> None:
+    results = [
+        *RESULTS[1:],
+        RESULTS[0].model_copy(update={"contradictions": (CONTRADICTION,)}),
+    ]
+    report = build_report(INFO, ITEMS, results)
+    md = render_markdown(report)
+    assert "- Contradictions: 1 attempts in which the target reported a call as executed" in md
+    assert "## Contradictions (1)" in md
+    assert f"- t-001 #2: `{CONTRADICTION}`" in md
+    data = json.loads(render_json(report))
+    assert data["contradictions"] == [
+        {"item": "t-001", "attempt": 2, "contradictions": [CONTRADICTION]}
+    ]
+    assert data["attempts"][1]["contradictions"] == [CONTRADICTION]
+
+
+def test_reports_without_contradictions_keep_their_shape() -> None:
+    report = build_report(INFO, ITEMS, RESULTS)
+    assert "Contradiction" not in render_markdown(report)
+    assert json.loads(render_json(report))["contradictions"] == []
+
+
 def test_an_http_target_label_names_the_report(tmp_path: Path) -> None:
     info = INFO.model_copy(
         update={"target": "stub", "settings": {"model": "fake:safe", "label": "Example API"}}

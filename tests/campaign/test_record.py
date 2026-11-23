@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -45,6 +46,21 @@ def test_round_trip_and_missing_answers(tmp_path: Path) -> None:
     assert loaded == record
     assert loaded.missing_answers == 1
     assert not list((tmp_path / ".runs").glob("*.partial"))
+
+
+def test_contradictions_round_trip_and_old_records_still_load(tmp_path: Path) -> None:
+    text = "repo_create_issue: denied by the harness, reported executed by the target"
+    result = AttemptResult(item_id="t-1", attempt=1, outcome=Outcome.SUCCESS, answer="a")
+    record = RunRecord(
+        info=INFO, items=(), results=(result.model_copy(update={"contradictions": (text,)}),)
+    )
+    path = write_record(record, tmp_path)
+    assert read_record(tmp_path, RUN_ID).results[0].contradictions == (text,)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    for attempt in raw["results"]:
+        del attempt["contradictions"]  # a record written before the field existed
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    assert read_record(tmp_path, RUN_ID).results[0].contradictions == ()
 
 
 def test_missing_record_says_what_to_do(tmp_path: Path) -> None:

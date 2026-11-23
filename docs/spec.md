@@ -223,7 +223,9 @@ stand-in. A strict schema rejects unknown keys at every level.
   after it has closed; each deny response is a new stream that continues the turn. Events map by
   event name or a type field, with dotted field paths; unknown events are ignored, malformed
   mapped events are an error. Tool result statuses map to `executed`, `denied` (rejected),
-  `refused` or `failed`; a call the harness denied stays denied when it is replayed.
+  `refused` or `failed`. A call the harness denied that the target then reports as executed counts
+  as executed, and the attempt records a contradiction ("denied by the harness, reported executed
+  by the target"); any other replayed status keeps it denied.
 - **Attempt:** plant the `doc:` fixtures (file name `drum-fixture-<run id>-<file>`) as
   `[fixtures] user` or else the item's user, poll the list endpoint until they are indexed, create
   a conversation, send the turns as the item's user, deny every approval, then delete the
@@ -309,6 +311,9 @@ Precedence rules (ADR 0007):
 - Unobservable attempts get a column in the per-item and category tables, a count in the header
   and under Overall, and a list section, all only when a run has any. HTTP runs name their observed
   channels in the header.
+- Contradictions (a call the harness denied that the target reports as executed) get a line in the
+  header and a list section in the Markdown report, only when a run has any; the JSON report lists
+  them under `contradictions`, and every attempt and the run record keep them.
 - Exit codes: `0` done, `1` self-test failed, `2` usage error, `3` a safety cap or the target
   stopped the run or planted documents were left, `130` interrupted.
 - **Guardrail middleware (M4):** optional, switched per run, so every report can compare with and without.

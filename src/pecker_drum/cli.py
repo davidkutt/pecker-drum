@@ -40,7 +40,14 @@ from pecker_drum.items.loader import ItemSetError, load_item_set, resolve_set_pa
 from pecker_drum.items.schema import Item, Vector
 from pecker_drum.judge import Judge, JudgeSpec, judge_result, make_judge, parse_judge_spec
 from pecker_drum.netguard import block_network
-from pecker_drum.report.render import Report, build_report, model_slug, pct, write_report
+from pecker_drum.report.render import (
+    Report,
+    build_report,
+    contradicted,
+    model_slug,
+    pct,
+    write_report,
+)
 from pecker_drum.results import AttemptResult
 from pecker_drum.targets.http import (
     ConfigError,
@@ -212,6 +219,12 @@ def _print_summary(report: Report, paths: tuple[Path, Path], notes: Sequence[str
         + (f", {overall.unobservable} unobservable" if unobs else "")
         + ")"
     )
+    contradictions = contradicted(report)
+    if contradictions:
+        print(
+            f"contradictions: {len(contradictions)} attempts: the target reported a call as "
+            "executed that the harness denied (graded as executed)"
+        )
     if report.judge_overall is not None:
         tally = report.judge_overall
         print(

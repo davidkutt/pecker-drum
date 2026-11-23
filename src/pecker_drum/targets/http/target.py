@@ -70,6 +70,7 @@ from pecker_drum.targets.http.templates import render, render_json, render_path
 from pecker_drum.twin.fixtures import FixtureError, FixtureLibrary
 
 TAG_PREFIX = "drum-fixture-"
+CONTRADICTION = "denied by the harness, reported executed by the target"
 _ANY_TAG = re.compile(r"drum-fixture-([0-9a-f]{16})")
 _MAX_ERROR = 300
 
@@ -126,6 +127,7 @@ class _Collector:
     sources: list[Source] = field(default_factory=list[Source])
     calls: dict[str, _Call] = field(default_factory=dict[str, _Call])
     approvals: list[ApprovalRecord] = field(default_factory=list[ApprovalRecord])
+    contradictions: list[str] = field(default_factory=list[str])
     error: str | None = None
 
     def fail(self, message: str) -> None:
@@ -146,8 +148,15 @@ class _Collector:
                     self.calls[key] = _Call(key, name, arguments)
             case ToolResultSeen(tool_call_id=call_id, status=status):
                 call = self.calls.get(call_id)
-                if call is not None and not call.denied_by_harness:
-                    call.status = status  # a denied call stays denied, never executed
+                if call is None:
+                    pass
+                elif not call.denied_by_harness:
+                    call.status = status
+                elif status is ToolCallStatus.EXECUTED and call.status is not status:
+                    # Grade the worst case: a control that said no and ran the call anyway.
+                    # Any other replayed status (rejected, refused, failed) keeps it denied.
+                    call.status = status
+                    self.contradictions.append(f"{call.name}: {CONTRADICTION}")
             case TargetReportedError(message=message):
                 self.fail(f"target error: {message}")
             case _:
@@ -198,6 +207,7 @@ class _Collector:
             usage=Usage(latency_s=round(latency_s, 4)),
             error=redact(self.error) if self.error is not None else None,
             observed=self.observed,
+            contradictions=tuple(redact(c) for c in self.contradictions),
         )
 
 

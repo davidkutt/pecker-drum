@@ -213,6 +213,31 @@ def test_private_target_run_reports_under_its_label(
     assert lab.server.state.documents == {}  # type: ignore[attr-defined]
 
 
+def test_a_contradiction_is_reported_and_re_rendered(
+    lab: Callable[..., Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = lab(StubOptions(denied_result_status="ok"))
+    out = tmp_path / "out"
+    assert lab_run(config, out, "--vectors", "direct") == EXIT_OK
+    assert "contradictions: 1 attempts: the target reported a call as executed" in (
+        capsys.readouterr().out
+    )
+    report = json_report(out)
+    assert outcomes(report)["pub-013"] == ["success"]
+    (hit,) = report["contradictions"]
+    assert hit["item"] == "pub-013"
+    run_id = report["run"]["run_id"]
+    for md in out.glob("*.md"):
+        md.unlink()
+    for js in out.glob("*.json"):
+        js.unlink()
+    assert run_cli("report", "--run-id", run_id, "--reports-dir", out) == EXIT_OK
+    (md,) = out.glob("*.md")
+    text = md.read_text(encoding="utf-8")
+    assert "## Contradictions (1)" in text
+    assert "repo_create_issue: denied by the harness, reported executed by the target" in text
+
+
 def test_preflight_refuses_items_the_target_cannot_run(
     lab: Callable[..., Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

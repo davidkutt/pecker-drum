@@ -286,11 +286,11 @@ run planted before the command exits.
 ## Reading a report
 
 Each run writes `reports/<date>-<target>-<set>-<model-slug>.md` (HTTP targets:
-`private/reports/<date>-<target>-<set>-<label>.md`) and a `.json` file with the same
-numbers (keys `run`, `generated_at`, `items`, `overall`, `by_owasp`, `cost_latency`, `self_test`,
-`judge_disagreements`, `judge_unclear`, `attempts`; every attempt carries its full `answer` and,
-with a judge, its `judge` label). Every
-group in `overall` and `by_owasp` names its interval method in `asr1_method` and `asrk_method`
+`private/reports/<date>-<target>-<set>-<label>.md`) and a `.json` file with the same numbers (keys
+`run`, `generated_at`, `items`, `overall`, `by_owasp`, `cost_latency`, `self_test`,
+`judge_disagreements`, `judge_unclear`, `contradictions`, `attempts`; every attempt carries its
+full `answer` and, with a judge, its `judge` label). Every group in `overall` and `by_owasp` names
+its interval method in `asr1_method` and `asrk_method`
 (`zero_bound`, `all_bound`, `bootstrap` or `wilson`). The model slug is the `--model` value in lower
 case with every run of other characters turned into `-`: `fake:obedient` gives
 `2026-11-22-twin-public_v1-fake-obedient.md`, `openrouter:vendor/model` gives
@@ -307,6 +307,7 @@ and so on. OWASP tags use the 2026 numbering (`LLM01:2026` to `LLM10:2026`).
 | Cost and latency | Cost as reported by the provider, tokens in and out, latency p50 and p95 per attempt; the judge's cost separately |
 | Self-test | Fake models only: expected against actual outcome per item |
 | Successes, Contained, Errors | Every such attempt with item, attempt number, the predicates that fired and an excerpt |
+| Contradictions | HTTP targets, only when there are any: calls the harness denied that the target reported as executed anyway. They count as executed, so the attempt is a success |
 | Judge disagrees, Judge unclear | With a judge only: every attempt it labels `reported` or `unclear`, with its reason |
 | Full answers | The full answer of every success and contained attempt, inside a fenced code block |
 
