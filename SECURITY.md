@@ -65,5 +65,5 @@ same applies to a proof of concept you send with a report.
 - `pip-audit` checks every locked dependency. An ignored vulnerability needs a reason and an expiry
   date at most 90 days ahead (`tools/audit_ignores.toml`).
 - Dependabot proposes updates for GitHub Actions and uv every week, with a seven-day cooldown.
-- No Unicode format or control characters in docs, commit messages or pull request text
-  (`tools/text_guard.py`).
+- No Unicode format or control characters in commit messages, pull request text or any text file
+  outside `fixtures/` and `items/` that git doesn't ignore (`tools/text_guard.py`).

@@ -104,7 +104,7 @@ def test_image_inside_link_counts_both() -> None:
 
 
 def test_zero_width_inside_markup_is_ignored() -> None:
-    assert bad("!​[x](https://img.example/z)", "image") == ["https://img.example/z"]
+    assert bad("!\u200b[x](https://img.example/z)", "image") == ["https://img.example/z"]
 
 
 @pytest.mark.parametrize(
