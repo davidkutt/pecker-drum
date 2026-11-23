@@ -1,9 +1,10 @@
 """The HTTP target adapter: attack an API target from the outside (M2, ADR 0009).
 
 Per attempt: plant the item's ``doc:`` fixtures (the tag ``drum-fixture-<run id>`` in the file
-name and title), wait until the list endpoint reports them indexed, create a conversation, send
-the turns, deny every approval request once its stream has closed (the deny response is a new
-event stream that continues the turn), then delete the documents and the conversation in a
+name and title) as ``[fixtures] user`` or else the item's user, wait until the list endpoint
+reports them indexed, create a conversation, send the turns as the item's user, deny every
+approval request once its stream has closed (the deny response is a new event stream that
+continues the turn), then delete the documents (as their owner) and the conversation in a
 ``finally``, also after an error or Ctrl-C. A document that cannot be deleted stops the run after
 the attempt.
 
@@ -371,7 +372,7 @@ class HttpTarget:
             async with deadline:
                 await self._plant(item, values, planted)
                 if planted:
-                    await self._wait_indexed(user, planted)
+                    await self._wait_indexed(self._fixtures_user(item), planted)
                 conversation.append(await self._create_conversation(user, values))
                 for turn in item.turns:
                     turn_values = values | {"conversation_id": conversation[0], "message": turn}
@@ -387,6 +388,12 @@ class HttpTarget:
         finally:
             await self._clean_up(user, values, planted, conversation)
         return collector.build(self._clock() - started, self._redact)
+
+    def _fixtures_user(self, item: Item) -> str:
+        """The login that plants, polls and deletes documents: ``[fixtures] user`` or the
+        item's user."""
+        fixtures = self.config.fixtures
+        return (fixtures.user if fixtures is not None else None) or item.user.sub
 
     # -- RunLifecycle -------------------------------------------------------------------------
 
@@ -514,6 +521,7 @@ class HttpTarget:
             msg = "this item plants documents, but the target config has no [fixtures]"
             raise TargetError(msg)
         upload = fixtures.upload
+        owner = self._fixtures_user(item)
         for name in docs:
             document = self._library.document(name)
             filename = f"{self.tag}-{name}"
@@ -525,13 +533,13 @@ class HttpTarget:
             for entry in upload.form:
                 form.setdefault(entry.name, []).append(render(entry.value, upload_values))
             content_type = "text/markdown" if name.endswith(".md") else "text/plain"
-            record = _Planted(filename, item.user.sub)
+            record = _Planted(filename, owner)
             planted.append(record)  # before the request: cleanup finds it even if the reply is lost
             reply = await self._session.call(
                 f"upload {name}",
                 upload.method,
                 self._session.url(render_path(upload.path, upload_values)),
-                token=await self._tokens.token_for(item.user.sub),
+                token=await self._tokens.token_for(owner),
                 form={key: list(value) for key, value in form.items()},
                 files={upload.file_field: (filename, document.text.encode(), content_type)},
             )
@@ -605,7 +613,10 @@ class HttpTarget:
                 self._problem(f"{what}: {type(exc).__name__}: {self._redact(str(exc))}", fatal)
 
         if planted:
-            await attempt(lambda: self._resolve_ids(sub, planted), "find planted documents", False)
+            owner = planted[0].user
+            await attempt(
+                lambda: self._resolve_ids(owner, planted), "find planted documents", False
+            )
         for record in planted:
             if record.id is None:
                 continue  # never seen on the target; the run's end sweeps by tag

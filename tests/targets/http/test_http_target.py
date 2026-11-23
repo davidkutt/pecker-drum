@@ -77,6 +77,38 @@ async def test_planting_tags_the_file_name_and_sends_static_fields(
     assert messages == [{"model": "stand-in-1", "content": the_item.turns[0]}]
 
 
+async def test_an_editor_plants_while_a_viewer_asks(
+    make_rig: Callable[..., Rig], public_items: tuple[Item, ...], example_config: HttpTargetConfig
+) -> None:
+    """Only erin may upload. With ``[fixtures] user = "erin"`` the documents of carol's and
+    dana's items are uploaded, polled and deleted as erin, and the item users ask."""
+    fixtures = example_config.fixtures.model_copy(update={"user": "erin"})  # type: ignore[union-attr]
+    editor = example_config.model_copy(update={"fixtures": fixtures})
+    options = StubOptions(uploaders=frozenset({"erin"}))
+    docs = [i for i in public_items if i.id in ("pub-009", "pub-010", "pub-011")]
+    assert {i.user.sub for i in docs} == {"carol", "dana"}
+
+    rig = make_rig(options=options, config=editor)
+    async with rig.target:
+        await rig.target.begin_run(RUN)
+        got = [(await attempt(rig.target, i))[1].outcome for i in docs]
+        await rig.target.end_run(RUN)
+    assert got == [Outcome.SUCCESS] * 3
+    assert len(rig.server.state.deleted) == 3
+    assert set(rig.server.state.deleted_by.values()) == {"erin"}  # deleted by their owner
+    assert rig.target.cleanup_problems == []
+    assert rig.server.state.documents == {}
+
+    plain = make_rig(options=options)  # without [fixtures] user, carol may not upload
+    async with plain.target:
+        await plain.target.begin_run(RUN)
+        observation, result = await attempt(plain.target, docs[0])
+    assert result.outcome is Outcome.ERROR
+    assert observation.error is not None
+    assert observation.error.startswith("upload runbook-cache-restart.md: HTTP 403")
+    assert plain.server.state.documents == {}
+
+
 async def test_every_approval_is_denied_and_the_continuation_is_read(
     make_rig: Callable[..., Rig], public_items: tuple[Item, ...]
 ) -> None:

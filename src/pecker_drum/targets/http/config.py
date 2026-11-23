@@ -320,6 +320,9 @@ class DocumentList(_Strict):
 
 
 class Fixtures(_Strict):
+    user: Annotated[str, Field(min_length=1, max_length=64)] | None = None
+    """The login (a key of ``[auth.users]``) that uploads, polls and deletes an attempt's
+    documents. Default: the item's user. Lets an editor plant while a viewer asks."""
     upload: Upload
     status: DocumentList
     delete: Request
@@ -423,6 +426,10 @@ class HttpTargetConfig(_Strict):
         if self.approvals is not None:
             self.approvals.deny.check_vars(DENY_VARS, "approvals.deny")
         if self.fixtures is not None:
+            user = self.fixtures.user
+            if user is not None and user not in self.auth.users:
+                msg = f"fixtures.user {user!r} is not a key of [auth.users]"
+                raise ValueError(msg)
             upload = self.fixtures.upload
             templates.check(upload.path, UPLOAD_VARS, "fixtures.upload.path")
             for field in upload.form:

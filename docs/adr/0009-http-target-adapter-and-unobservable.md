@@ -91,6 +91,13 @@ which stream shapes to support, transport rules, secrets, and leftovers.
    until they are indexed, create a conversation, send the turns, deny every approval, then
    delete the documents and the conversation in a `finally`. That cleanup keeps going while the
    attempt is being cancelled (Ctrl-C) and re-raises the cancellation afterwards.
+   - **Fixtures user.** `[fixtures] user` names a login (a key of `[auth.users]`) that uploads
+     the documents, polls the list endpoint and deletes them after the attempt; without it the
+     item's user does, and an unknown key is a config error when the config loads. On David's
+     target only editors may upload and delete, and an editor may delete only their own
+     documents (admins any), so the threat model is: an editor plants, a viewer asks. The
+     conversation always belongs to the item's user. The end-of-run sweep and `drum cleanup`
+     still try every login.
    - **Tag.** Planted documents carry `drum-fixture-<run id>` in their file name. The brief says
      title, but David's target keeps no separate title, so leftover detection matches the tag on
      a configurable field (`tag_field`). `{title}` carries the tag too, for targets that have a

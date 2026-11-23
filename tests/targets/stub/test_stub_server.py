@@ -101,6 +101,25 @@ def test_documents_are_listed_for_everyone_and_deleted_by_their_owner(server: St
         assert client.delete(f"/api/documents/{created['id']}", headers=carol).status_code == 404
 
 
+def test_uploads_can_be_limited_to_some_users() -> None:
+    block_network(allow_loopback=True)
+    users = {"carol": "pw-c", "dana": "pw-d"}
+    options = StubOptions(uploaders=frozenset({"dana"}))
+    with (
+        StubServer([ITEM], StubMode.OBEDIENT, users, options) as up,
+        httpx.Client(base_url=up.url, trust_env=False) as client,
+    ):
+        for user, status in (("carol", 403), ("dana", 201)):
+            token = login(client, user, users[user]).json()["access_token"]
+            reply = client.post(
+                "/api/documents",
+                headers={"Authorization": f"Bearer {token}"},
+                data={"collection": "c"},
+                files={"file": ("a.md", b"text")},
+            )
+            assert reply.status_code == status, user
+
+
 def test_messages_need_the_static_model_field_and_a_known_script(server: StubServer) -> None:
     with httpx.Client(base_url=server.url, trust_env=False) as client:
         carol = {"Authorization": "Bearer " + login(client, "carol", "pw-c").json()["access_token"]}

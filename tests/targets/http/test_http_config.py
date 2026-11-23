@@ -199,3 +199,14 @@ def test_missing_and_broken_files(tmp_path: Path) -> None:
     missing_ca.write_text(variant('# ca_file = "redteam-ca.pem"', 'ca_file = "ca.pem"'), "utf-8")
     with pytest.raises(ConfigError, match="ca_file"):
         load_config(missing_ca)
+
+
+def test_fixtures_user_must_be_a_configured_login() -> None:
+    assert parse_config(TEXT).fixtures.user is None  # type: ignore[union-attr]
+    editor = parse_config(variant('# user = "dana"', 'user = "dana"'))
+    assert editor.fixtures.user == "dana"  # type: ignore[union-attr]
+    assert editor.digest() != parse_config(TEXT).digest()
+    with pytest.raises(
+        ConfigError, match=r"fixtures.user 'mallory' is not a key of \[auth.users\]"
+    ):
+        parse_config(variant('# user = "dana"', 'user = "mallory"'))

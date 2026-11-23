@@ -206,7 +206,10 @@ For your own target, only ever a red-team instance of it:
    variables for the passwords (`password_env`, names start with `DRUM_`) and never holds a value.
    Use `http` only for `localhost` and other loopback addresses; anything else needs `https`.
 2. Put the item set in `private/sets/` and its documents in `private/fixtures/documents/` (a
-   `doc:<file>` fixture is read from `<fixtures dir>/documents/<file>`).
+   `doc:<file>` fixture is read from `<fixtures dir>/documents/<file>`). If only some users may
+   upload, set `[fixtures] user` to one of them (a key of `[auth.users]`): that login plants,
+   polls and deletes the documents while the item's user asks, so an editor plants and a viewer
+   asks. Without it the item's user plants.
 3. Read each password into the shell, then run. Passwords never go into `.env`, which still holds
    only the OpenRouter settings. Naming the variables `DRUM_PRIVATE_...` keeps coding agents away
    from commands that mention them (the pecker-nest gate blocks such commands).

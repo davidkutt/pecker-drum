@@ -13,10 +13,10 @@ gets 404. A client that disconnects before the close cancels the turn: its appro
 stored.
 
 Like the fake models it is driven by an item's ``self_test``: in obedient mode it replays the
-item's tool calls (read tools emit a tool call, its result and the user's documents as sources;
-write tools ask for approval) and gives the item's answer; in safe mode it makes the same read
-calls, never a write call, and answers neutrally. It finds the item by the user and the message
-text. Switches in ``StubOptions`` let tests force faults.
+item's tool calls (read tools emit a tool call, its result and every ready document as sources,
+whoever uploaded it; write tools ask for approval) and gives the item's answer; in safe mode it
+makes the same read calls, never a write call, and answers neutrally. It finds the item by the
+user and the message text. Switches in ``StubOptions`` let tests force faults.
 
 The stub serves the harness's own tests; nothing here runs for a real target.
 """
@@ -73,6 +73,9 @@ class StubOptions:
     """The continuation after a deny starts by replaying the denied call and its result."""
     refused_tools: frozenset[str] = frozenset()
     """Tools the stub's own permission check refuses (tool result status ``forbidden``)."""
+    uploaders: frozenset[str] | None = None
+    """Users who may upload documents (others get 403); ``None``: everyone. A document can
+    always be deleted only by its owner."""
     message_status: int | None = None
     """Answer every message with this HTTP status instead of a stream."""
     chunk_size: int | None = None
@@ -128,6 +131,8 @@ class StubState:
     """``(grant type, user)`` per token request."""
     documents: dict[str, _Document] = field(default_factory=dict[str, _Document])
     deleted: list[str] = field(default_factory=list[str])
+    deleted_by: dict[str, str] = field(default_factory=dict[str, str])
+    """Document id to the user who deleted it."""
     conversations: dict[str, str] = field(default_factory=dict[str, str])
     deleted_conversations: list[str] = field(default_factory=list[str])
     pending: dict[str, _Pending] = field(default_factory=dict[str, _Pending])
@@ -306,7 +311,7 @@ class StubServer:
                 documents = [
                     {"id": d.id, "title": d.filename, "text": d.text}
                     for d in self.state.documents.values()
-                    if d.owner == turn.username and d.status == "ready"
+                    if d.status == "ready"  # a shared knowledge base: every owner's documents
                 ]
                 if self.options.leaky:
                     documents.append({"id": "debug", "title": "debug", "text": f"token {token}"})
@@ -504,6 +509,7 @@ class _Handler(BaseHTTPRequestHandler):
                     if not stub.options.ignore_deletes:
                         del stub.state.documents[parts[2]]
                         stub.state.deleted.append(parts[2])
+                        stub.state.deleted_by[parts[2]] = username
             self._send(status)
         elif len(parts) == 3 and parts[:2] == ["api", "conversations"]:
             with stub.lock:
@@ -606,6 +612,10 @@ class _Handler(BaseHTTPRequestHandler):
     def _upload(self) -> None:
         found = self._user()
         if found is None:
+            return
+        uploaders = self.stub.options.uploaders
+        if uploaders is not None and found[0] not in uploaders:
+            self._send(HTTPStatus.FORBIDDEN, {"error": "only editors may upload"})
             return
         content_type = self.headers.get("Content-Type", "")
         if not content_type.startswith("multipart/form-data"):

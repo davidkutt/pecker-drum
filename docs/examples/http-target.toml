@@ -122,6 +122,10 @@ body = { decision = "reject", note = "denied by pecker-drum" }
 
 # -- fixtures: documents planted per attempt and deleted afterwards ------------------------------
 
+[fixtures]
+# user = "dana"                        # upload, poll and delete as this login (a key of [auth.users]),
+                                       # for example an editor while a viewer asks; default: item.user
+
 [fixtures.upload]                      # multipart; + filename, title
 method = "POST"
 path = "/api/documents"

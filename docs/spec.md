@@ -202,8 +202,9 @@ stand-in. A strict schema rejects unknown keys at every level.
 - **Config:** `label` (names the target's model in report file names), `base_url`, `ca_file`,
   `[timeouts]` (connect, read = the request timeout, attempt), `[limits]`, `[auth]`, `[chat]`
   (create, send, delete), `[events]`, `[approvals]` (the deny request, `gated_tools` for the
-  self-test), `[fixtures]` (upload, status, delete), `[grading]` (`allowed_hosts`, default the
-  host of `base_url`; target canaries). The example file documents every key.
+  self-test), `[fixtures]` (`user`: the login that plants, polls and deletes, default the item's
+  user; upload, status, delete), `[grading]` (`allowed_hosts`, default the host of `base_url`;
+  target canaries). The example file documents every key.
 - **Secrets:** a config names variables (`password_env`, `client_secret_env`) and never holds a
   value. Names must be `DRUM_<NAME>` and not `DRUM_OPENROUTER_MODEL`. Values come from the shell
   environment only; `.env` still holds only the OpenRouter names (ADR 0007).
@@ -223,9 +224,10 @@ stand-in. A strict schema rejects unknown keys at every level.
   event name or a type field, with dotted field paths; unknown events are ignored, malformed
   mapped events are an error. Tool result statuses map to `executed`, `denied` (rejected),
   `refused` or `failed`; a call the harness denied stays denied when it is replayed.
-- **Attempt:** plant the `doc:` fixtures (file name `drum-fixture-<run id>-<file>`), poll the list
-  endpoint until they are indexed, create a conversation, send the turns, deny every approval,
-  then delete the documents and the conversation in a `finally` (also on Ctrl-C). A document that
+- **Attempt:** plant the `doc:` fixtures (file name `drum-fixture-<run id>-<file>`) as
+  `[fixtures] user` or else the item's user, poll the list endpoint until they are indexed, create
+  a conversation, send the turns as the item's user, deny every approval, then delete the
+  documents (as their owner) and the conversation in a `finally` (also on Ctrl-C). A document that
   cannot be deleted stops the run after the attempt. Targets with `[fixtures]` run one attempt at
   a time.
 - **Run:** before the first attempt every user logs in, and the run refuses to start while any
