@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -80,3 +81,20 @@ def read_record(reports_dir: Path, run_id: str) -> RunRecord:
     except (OSError, UnicodeDecodeError, ValidationError):
         msg = f"the run record {path} cannot be read; run it again"
         raise RunRecordError(msg) from None
+
+
+def find_record(reports_dirs: Sequence[Path], run_id: str) -> tuple[Path, RunRecord]:
+    """The first of ``reports_dirs`` that holds a record for ``run_id`` (M2: twin runs in
+    ``reports/``, HTTP runs in ``private/reports/``), and the record."""
+    for reports_dir in reports_dirs:
+        if record_path(reports_dir, run_id).is_file():
+            return reports_dir, read_record(reports_dir, run_id)
+    for reports_dir in reports_dirs:
+        if (reports_dir / CHECKPOINTS_DIR / f"{run_id}.sqlite").is_file():
+            return reports_dir, read_record(reports_dir, run_id)  # raises "has not finished"
+    places = " or ".join(str(d / RUNS_DIR) for d in reports_dirs)
+    msg = (
+        f"no finished run {run_id} in {places}: runs that finished before M1.5 keep no record, "
+        "so run it again"
+    )
+    raise RunRecordError(msg)

@@ -263,6 +263,15 @@ class HttpTarget:
     def tag(self) -> str:
         return TAG_PREFIX + self._run_id
 
+    @property
+    def run_id(self) -> str:
+        """The run this target works for (set by ``begin_run`` or ``use_run``)."""
+        return self._run_id
+
+    def use_run(self, run_id: str) -> None:
+        """Work on ``run_id`` outside a run (``drum cleanup``)."""
+        self._run_id = run_id
+
     def describe(self) -> dict[str, str]:
         identity = self._identity
         approvals = identity.approvals
@@ -707,6 +716,7 @@ async def clean_up_run(
     target: HttpTarget, run_id: str
 ) -> tuple[tuple[RemoteDocument, ...], list[str], tuple[RemoteDocument, ...]]:
     """``drum cleanup``: delete the documents with ``run_id``'s tag, then list again."""
+    target.use_run(run_id)
     found = await target.find_documents(run_id)
     problems = await target.delete_documents(found) if found else []
     remaining = await target.find_documents(run_id)
