@@ -613,6 +613,7 @@ class _Handler(BaseHTTPRequestHandler):
         found = self._user()
         if found is None:
             return
+        body = self._body()  # read it first: answering early would reset the connection
         uploaders = self.stub.options.uploaders
         if uploaders is not None and found[0] not in uploaders:
             self._send(HTTPStatus.FORBIDDEN, {"error": "only editors may upload"})
@@ -621,7 +622,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not content_type.startswith("multipart/form-data"):
             self._send(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "multipart/form-data only"})
             return
-        fields, files = parse_multipart(content_type, self._body())
+        fields, files = parse_multipart(content_type, body)
         if not fields.get(REQUIRED_UPLOAD_FIELD) or len(files) != 1 or files[0][0] != "file":
             self._send(
                 HTTPStatus.BAD_REQUEST, {"error": f"file and {REQUIRED_UPLOAD_FIELD} required"}
