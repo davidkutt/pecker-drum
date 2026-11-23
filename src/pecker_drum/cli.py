@@ -524,7 +524,8 @@ def _run_http_target(
             print(f"drum: {problem}", file=sys.stderr)
         print("drum: nothing was run (narrow the set with --vectors?)", file=sys.stderr)
         return EXIT_USAGE
-    notes = [f"target {args.target}: {config.label} at {config.base_url}"]
+    where = "the stand-in" if stub else config.label
+    notes = [f"target {args.target}: {where} at {runtime.base_url}"]
     concurrency = args.concurrency
     if config.fixtures is not None and concurrency > 1:
         concurrency = 1
