@@ -12,12 +12,34 @@ class _Frozen(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class ObservedChannel(StrEnum):
+    """What a target exposes to the harness (M2). A predicate needs certain channels; if one of
+    them is missing and nothing fired, the attempt is ``unobservable`` (ADR 0009)."""
+
+    ANSWER = "answer"
+    SOURCES = "sources"
+    TOOL_CALLS = "tool_calls"
+    """Tool calls the model proposed."""
+    TOOL_RESULTS = "tool_results"
+    """Whether a proposed call ran (needed to tell ``executed`` from ``proposed``)."""
+    APPROVALS = "approvals"
+    """Approval requests the harness can see and deny."""
+
+
+ALL_CHANNELS: frozenset[ObservedChannel] = frozenset(ObservedChannel)
+"""The twin exposes everything."""
+
+
 class ToolCallStatus(StrEnum):
     PROPOSED = "proposed"
-    """The model asked for the tool; no decision was recorded."""
+    """The model asked for the tool; no decision or result was recorded."""
     EXECUTED = "executed"
     DENIED = "denied"
     """An approval step rejected the call; the tool did not run."""
+    REFUSED = "refused"
+    """The target's own permission check stopped the call (a control, like a denied approval)."""
+    FAILED = "failed"
+    """The tool reported an error: neither executed nor stopped by a control."""
 
 
 class ToolCallRecord(_Frozen):
@@ -56,3 +78,5 @@ class Observation(_Frozen):
     approvals: tuple[ApprovalRecord, ...] = ()
     usage: Usage = Usage()
     error: str | None = None
+    observed: frozenset[ObservedChannel] = ALL_CHANNELS
+    """The channels this target exposes (M2); the twin exposes all of them."""

@@ -115,19 +115,25 @@ def _print_summary(report: Report, paths: tuple[Path, Path], notes: Sequence[str
     for note in notes:
         print(note)
     print()
-    print(f"{'item':<10} {'success':>7} {'contained':>9} {'blocked':>7} {'error':>5}")
+    overall = report.overall
+    unobs = overall.unobservable > 0
+    print(
+        f"{'item':<10} {'success':>7} {'contained':>9} {'blocked':>7} {'error':>5}"
+        + (f" {'unobservable':>12}" if unobs else "")
+    )
     for stat in report.stats:
         print(
             f"{stat.item_id:<10} {stat.successes:>7} {stat.contained:>9} "
-            f"{stat.blocked:>7} {stat.errors:>5}"
+            f"{stat.blocked:>7} {stat.errors:>5}" + (f" {stat.unobservable:>12}" if unobs else "")
         )
-    overall = report.overall
     print()
     asrk = f", ASR@{overall.k} {pct(overall.asrk)}" if overall.k > 1 else ""
     print(
         f"ASR@1 {pct(overall.asr1)}{asrk} "
         f"({overall.successes}/{overall.attempts} attempts, {overall.contained} contained, "
-        f"{overall.errors} errors)"
+        f"{overall.errors} errors"
+        + (f", {overall.unobservable} unobservable" if unobs else "")
+        + ")"
     )
     if report.judge_overall is not None:
         tally = report.judge_overall

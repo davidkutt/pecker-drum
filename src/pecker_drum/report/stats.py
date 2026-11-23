@@ -83,7 +83,7 @@ def asr_at_k(p: float, k: int) -> float:
 class AttemptOutcome:
     item_id: str
     outcome: str
-    """``success``, ``contained``, ``blocked`` or ``error``."""
+    """``success``, ``contained``, ``blocked``, ``error`` or ``unobservable``."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,11 +94,13 @@ class ItemStats:
     contained: int
     blocked: int
     errors: int
+    unobservable: int = 0
+    """Attempts the target could not show the needed channel for (M2); excluded like errors."""
 
     @property
     def valid(self) -> int:
-        """Attempts that count for rates (errors excluded)."""
-        return self.attempts - self.errors
+        """Attempts that count for rates (errors and unobservable attempts excluded)."""
+        return self.attempts - self.errors - self.unobservable
 
     @property
     def p(self) -> float | None:
@@ -132,6 +134,7 @@ class Aggregate:
     asrk_ci: Interval | None
     asrk_method: IntervalMethod | None
     k: int
+    unobservable: int = 0
 
 
 def item_stats(item_ids: Sequence[str], outcomes: Iterable[AttemptOutcome]) -> list[ItemStats]:
@@ -150,6 +153,7 @@ def item_stats(item_ids: Sequence[str], outcomes: Iterable[AttemptOutcome]) -> l
                 contained=bucket.get("contained", 0),
                 blocked=bucket.get("blocked", 0),
                 errors=bucket.get("error", 0),
+                unobservable=bucket.get("unobservable", 0),
             )
         )
     return stats
@@ -250,4 +254,5 @@ def aggregate(name: str, stats: Sequence[ItemStats], k: int) -> Aggregate:
         asrk_ci=asrk_ci,
         asrk_method=asrk_method,
         k=k,
+        unobservable=sum(s.unobservable for s in stats),
     )

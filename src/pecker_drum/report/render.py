@@ -17,6 +17,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from pecker_drum.grading.outcome import REQUIRED_CHANNELS
 from pecker_drum.items.schema import Item
 from pecker_drum.report.excerpt import code_span, escape_excerpt, fenced_block
 from pecker_drum.report.stats import (
@@ -303,6 +304,8 @@ def _aggregate_line(agg: Aggregate) -> list[str]:
         f"- **Contained:** {agg.contained}/{agg.attempts} attempts",
         f"- **Errors (excluded from rates):** {agg.errors}",
     ]
+    if agg.unobservable:
+        lines.append(f"- **Unobservable (excluded from rates):** {agg.unobservable}")
     return lines
 
 
@@ -353,6 +356,54 @@ def _judge_lists(report: Report) -> list[str]:
     return out
 
 
+def _unobservable_items(report: Report) -> list[tuple[str, int, int, tuple[str, ...]]]:
+    """``(item id, unobservable attempts, attempts, kinds)`` for items with such attempts."""
+    rows: list[tuple[str, int, int, tuple[str, ...]]] = []
+    for stat in report.stats:
+        if not stat.unobservable:
+            continue
+        kinds: list[str] = []
+        for result in report.results:
+            if result.item_id == stat.item_id:
+                kinds += [kind for kind in result.unobservable if kind not in kinds]
+        rows.append((stat.item_id, stat.unobservable, stat.attempts, tuple(kinds)))
+    return rows
+
+
+def _unobservable_header(report: Report) -> list[str]:
+    rows = _unobservable_items(report)
+    if not rows:
+        return []
+    ids = ", ".join(item_id for item_id, *_ in rows)
+    return [
+        f"- Unobservable attempts (excluded from rates): {report.overall.unobservable} in "
+        f"{len(rows)} items ({ids}): a predicate needs a channel the target does not expose; "
+        "listed under Unobservable"
+    ]
+
+
+def _unobservable_section(report: Report) -> list[str]:
+    rows = _unobservable_items(report)
+    if not rows:
+        return []
+    out = [
+        f"## Unobservable ({report.overall.unobservable})",
+        "",
+        "Nothing fired in these attempts, but a predicate needs a channel the target does not "
+        "expose, so they are excluded from rates instead of counting as blocked.",
+        "",
+    ]
+    for item_id, count, attempts, kinds in rows:
+        needs = "; ".join(
+            f"{kind} needs {', '.join(sorted(c.value for c in REQUIRED_CHANNELS[kind]))}"
+            for kind in kinds
+            if kind in REQUIRED_CHANNELS
+        )
+        out.append(f"- {item_id}: {count} of {attempts} attempts; {needs}")
+    out.append("")
+    return out
+
+
 def _full_answers(report: Report) -> list[str]:
     hits = [r for r in report.results if r.outcome in ("success", "contained")]
     out = [
@@ -396,16 +447,22 @@ def render_markdown(report: Report) -> str:
         f"- Judge: {judge}",
     ]
     out += [f"- {key}: {_cell(value)}" for key, value in sorted(info.settings.items())]
+    out += _unobservable_header(report)
+    unobs = report.overall.unobservable > 0
     out += [
         "",
-        "Excerpts are escaped and cut to 120 characters. Rates exclude errors. Full answers of "
-        "success and contained attempts are at the end, inside fenced code blocks.",
+        "Excerpts are escaped and cut to 120 characters. Rates exclude errors"
+        f"{' and unobservable attempts' if unobs else ''}. Full answers of success and contained "
+        "attempts are at the end, inside fenced code blocks.",
         "",
         "## Per item",
         "",
         "| Item | Title | Vector | Severity | Successes | Contained | Blocked | Errors "
-        f"| ASR@1 |{f' ASR@{k} |' if k > 1 else ''} 0/n upper bound |",
-        "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- |"
+        f"|{' Unobservable |' if unobs else ''} ASR@1 |{f' ASR@{k} |' if k > 1 else ''} "
+        "0/n upper bound |",
+        "| --- | --- | --- | --- | ---: | ---: | ---: | ---: |"
+        + (" ---: |" if unobs else "")
+        + " --- |"
         + (" --- |" if k > 1 else "")
         + " --- |",
     ]
@@ -414,8 +471,9 @@ def render_markdown(report: Report) -> str:
         item = by_id[stat.item_id]
         out.append(
             f"| {stat.item_id} | {_cell(item.title)} | {item.vector.value} | {item.severity.value} "
-            f"| {stat.successes} | {stat.contained} | {stat.blocked} | {stat.errors} "
-            f"| {_rate(stat.successes, stat.valid)} |"
+            f"| {stat.successes} | {stat.contained} | {stat.blocked} | {stat.errors} |"
+            + (f" {stat.unobservable} |" if unobs else "")
+            + f" {_rate(stat.successes, stat.valid)} |"
             + (f" {pct(stat.asr(k))} |" if k > 1 else "")
             + f" {_bound(stat)} |"
         )
@@ -427,13 +485,21 @@ def render_markdown(report: Report) -> str:
         out += [
             "## Per OWASP category",
             "",
-            "| Category | Items | Successes | Contained | Errors | ASR@1 |"
+            "| Category | Items | Successes | Contained | Errors |"
+            + (" Unobservable |" if unobs else "")
+            + " ASR@1 |"
             + (f" ASR@{k} |" if k > 1 else ""),
-            "| --- | ---: | --- | ---: | ---: | --- |" + (" --- |" if k > 1 else ""),
+            "| --- | ---: | --- | ---: | ---: |"
+            + (" ---: |" if unobs else "")
+            + " --- |"
+            + (" --- |" if k > 1 else ""),
         ]
         out += [
             f"| {agg.name} | {agg.items} | {agg.successes}/{agg.attempts} | {agg.contained} "
-            f"| {agg.errors} | {_asr1(agg)} |" + (f" {_asrk(agg)} |" if k > 1 else "")
+            f"| {agg.errors} |"
+            + (f" {agg.unobservable} |" if unobs else "")
+            + f" {_asr1(agg)} |"
+            + (f" {_asrk(agg)} |" if k > 1 else "")
             for agg in report.by_owasp
         ]
         out += ["", legend(k), ""]
@@ -484,6 +550,7 @@ def render_markdown(report: Report) -> str:
     out += [f"## Errors ({len(errors)})", ""]
     out += [f"- {r.item_id} #{r.attempt}: {code_span(r.error or '')}" for r in errors]
     out.append("")
+    out += _unobservable_section(report)
     if report.judged:
         out += _judge_lists(report)
     out += _full_answers(report)
@@ -502,6 +569,7 @@ def _aggregate_json(agg: Aggregate) -> dict[str, Any]:
         "successes": agg.successes,
         "contained": agg.contained,
         "errors": agg.errors,
+        "unobservable": agg.unobservable,
         "k": agg.k,
         "asr1": agg.asr1,
         "asr1_ci95": _interval_json(agg.asr1_ci),
@@ -548,6 +616,7 @@ def render_json(report: Report) -> str:
                 "contained": s.contained,
                 "blocked": s.blocked,
                 "errors": s.errors,
+                "unobservable": s.unobservable,
                 "asr1": s.p,
                 "asrk": s.asr(k),
                 "upper_bound_95": s.upper_bound,

@@ -451,3 +451,40 @@ def test_strict_statistics_ignore_the_judge() -> None:
     assert with_judge.stats == without.stats
     assert with_judge.overall == without.overall
     assert with_judge.by_owasp == without.by_owasp
+
+
+def unobservable_results() -> list[AttemptResult]:
+    kinds = ("tool_executed",)
+    return [
+        AttemptResult(item_id="t-001", attempt=1, outcome=Outcome.BLOCKED),
+        AttemptResult(item_id="t-001", attempt=2, outcome=Outcome.SUCCESS),
+        AttemptResult(item_id="t-002", attempt=1, outcome=Outcome.UNOBSERVABLE, unobservable=kinds),
+        AttemptResult(item_id="t-002", attempt=2, outcome=Outcome.UNOBSERVABLE, unobservable=kinds),
+    ]
+
+
+def test_unobservable_attempts_are_excluded_from_rates_and_listed() -> None:
+    report = build_report(INFO, ITEMS, unobservable_results())
+    t2 = report.stats[1]
+    assert (t2.unobservable, t2.valid, t2.p) == (2, 0, None)
+    assert report.overall.unobservable == 2
+    assert report.overall.attempts == 2  # valid attempts only
+    assert report.overall.asr1 == 0.5
+    md = render_markdown(report)
+    assert "- Unobservable attempts (excluded from rates): 2 in 1 items (t-002)" in md
+    assert "| Errors | Unobservable | ASR@1 |" in md
+    assert "| t-002 | title \\| t-002 | indirect_doc | high | 0 | 0 | 0 | 0 | 2 | n/a |" in md
+    assert "- **Unobservable (excluded from rates):** 2" in md
+    assert "## Unobservable (2)" in md
+    assert "- t-002: 2 of 2 attempts; tool_executed needs tool_calls, tool_results" in md
+    data = json.loads(render_json(report))
+    assert data["items"][1]["unobservable"] == 2
+    assert data["overall"]["unobservable"] == 2
+    assert data["by_owasp"][0]["unobservable"] == 2
+    assert data["attempts"][2]["unobservable"] == ["tool_executed"]
+
+
+def test_reports_without_unobservable_attempts_keep_their_shape() -> None:
+    md = render_markdown(build_report(INFO, ITEMS, RESULTS))
+    assert "Unobservable" not in md
+    assert "unobservable" not in md

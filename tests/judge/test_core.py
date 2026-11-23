@@ -247,3 +247,9 @@ async def test_judge_reason_is_escaped_and_cut(monkeypatch: pytest.MonkeyPatch) 
     assert "`" not in labelled.judge.reason
     assert zwsp not in labelled.judge.reason
     assert "\\u200b" in labelled.judge.reason
+
+
+async def test_unobservable_attempts_get_no_label() -> None:
+    result = AttemptResult(item_id="t-001", attempt=1, outcome=Outcome.UNOBSERVABLE, answer="hi")
+    judged = await judge_result(FakeJudge(JudgeLabel.COMPLIED), ITEM, result)
+    assert judged.judge is None

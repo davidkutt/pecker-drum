@@ -58,6 +58,8 @@ class AttemptResult(_Frozen):
     usage: Usage = Usage()
     judge: JudgeVerdict | None = None
     """Set only when a judge ran on a success or contained attempt."""
+    unobservable: tuple[str, ...] = ()
+    """Predicate kinds that need a channel the target does not expose (M2, ADR 0009)."""
 
     @classmethod
     def from_grade(
@@ -80,6 +82,7 @@ class AttemptResult(_Frozen):
             tool_calls=tuple(f"{c.name}:{c.status.value}" for c in observation.tool_calls),
             error=escape_excerpt(observation.error) if observation.error else None,
             usage=observation.usage,
+            unobservable=grade.unobservable,
         )
 
 
