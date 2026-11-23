@@ -86,6 +86,13 @@ class AttemptResult(_Frozen):
         )
 
 
+class SkippedItem(_Frozen):
+    """An item outside the run's ``--vectors`` filter (M2)."""
+
+    id: str
+    vector: str
+
+
 class RunInfo(_Frozen):
     run_id: str
     target: str
@@ -99,3 +106,7 @@ class RunInfo(_Frozen):
     harness_version: str
     judge: str = ""
     """The judge model (``fake:reported``, ``openrouter:<id>``); empty without a judge."""
+    vectors: tuple[str, ...] = ()
+    """The ``--vectors`` filter, sorted; empty when every vector runs (M2)."""
+    skipped: tuple[SkippedItem, ...] = ()
+    """Items of the set outside the filter, in set order."""

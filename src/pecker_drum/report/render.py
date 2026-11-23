@@ -446,6 +446,11 @@ def render_markdown(report: Report) -> str:
         f"- Harness version {info.harness_version}",
         f"- Judge: {judge}",
     ]
+    if info.vectors:
+        out.append(
+            f"- Vectors: {', '.join(info.vectors)} ({len(info.skipped)} items of the set outside "
+            "this filter were skipped, listed under Skipped)"
+        )
     out += [f"- {key}: {_cell(value)}" for key, value in sorted(info.settings.items())]
     out += _unobservable_header(report)
     unobs = report.overall.unobservable > 0
@@ -551,6 +556,10 @@ def render_markdown(report: Report) -> str:
     out += [f"- {r.item_id} #{r.attempt}: {code_span(r.error or '')}" for r in errors]
     out.append("")
     out += _unobservable_section(report)
+    if info.vectors:
+        out += [f"## Skipped (outside --vectors, {len(info.skipped)})", ""]
+        out += [f"- {_cell(skipped.id)} ({skipped.vector})" for skipped in info.skipped]
+        out.append("")
     if report.judged:
         out += _judge_lists(report)
     out += _full_answers(report)
@@ -690,10 +699,16 @@ def report_paths(
         counter += 1
 
 
+def report_label(info: RunInfo) -> str:
+    """What names the model in report file names: an HTTP target's ``label`` setting (M2), else
+    the model."""
+    return info.settings.get("label") or info.model
+
+
 def write_report(report: Report, reports_dir: Path, today: date) -> tuple[Path, Path]:
     reports_dir.mkdir(parents=True, exist_ok=True)
     md, js = report_paths(
-        reports_dir, today, report.info.target, report.info.item_set, report.info.model
+        reports_dir, today, report.info.target, report.info.item_set, report_label(report.info)
     )
     md.write_text(render_markdown(report), encoding="utf-8")
     js.write_text(render_json(report), encoding="utf-8")
@@ -712,6 +727,7 @@ __all__ = [
     "model_slug",
     "render_json",
     "render_markdown",
+    "report_label",
     "report_paths",
     "write_report",
 ]

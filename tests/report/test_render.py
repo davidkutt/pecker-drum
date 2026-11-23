@@ -488,3 +488,11 @@ def test_reports_without_unobservable_attempts_keep_their_shape() -> None:
     md = render_markdown(build_report(INFO, ITEMS, RESULTS))
     assert "Unobservable" not in md
     assert "unobservable" not in md
+
+
+def test_an_http_target_label_names_the_report(tmp_path: Path) -> None:
+    info = INFO.model_copy(
+        update={"target": "stub", "settings": {"model": "fake:safe", "label": "Example API"}}
+    )
+    md, _ = write_report(build_report(info, ITEMS, RESULTS), tmp_path, date(2026, 11, 23))
+    assert md.name == "2026-11-23-stub-demo_v1-example-api.md"

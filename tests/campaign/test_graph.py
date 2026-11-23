@@ -235,3 +235,125 @@ async def test_a_finished_run_leaves_a_run_record(item_set: Path, tmp_path: Path
     assert record.missing_answers == 0
     assert {r.answer for r in record.results} == {f"answer {CANARY}", "no leak"}
     assert checkpoint_files(tmp_path) == []
+
+
+# --- M2: vector filter, safety caps, lifecycle hooks.
+
+
+@pytest.fixture
+def mixed_set(tmp_path: Path) -> Path:
+    path = tmp_path / "items" / "mixed_v1.jsonl"
+    path.parent.mkdir(exist_ok=True)
+    rows = [
+        item_json("t-001") | {"vector": "direct"},
+        item_json("t-002") | {"vector": "indirect_tool"},
+        item_json("t-003") | {"vector": "indirect_doc"},
+    ]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    return path
+
+
+async def test_vector_filter_skips_and_lists_items(mixed_set: Path, tmp_path: Path) -> None:
+    target = FakeTarget()
+    vectors = frozenset({"direct", "indirect_doc"})
+    result = await run_campaign(target, config(mixed_set, tmp_path, vectors=vectors))
+    assert sorted({item_id for item_id, _ in target.calls}) == ["t-001", "t-003"]
+    assert [s.item_id for s in result.report.stats] == ["t-001", "t-003"]
+    info = result.report.info
+    assert info.vectors == ("direct", "indirect_doc")
+    assert [(s.id, s.vector) for s in info.skipped] == [("t-002", "indirect_tool")]
+    md = result.report_paths[0].read_text(encoding="utf-8")
+    assert "- Vectors: direct, indirect_doc (1 items of the set outside" in md
+    assert "## Skipped (outside --vectors, 1)\n\n- t-002 (indirect_tool)" in md
+
+
+def test_vector_filter_enters_the_run_id_only_when_set(mixed_set: Path) -> None:
+    from pecker_drum.campaign.graph import run_id_for
+    from pecker_drum.items.loader import load_item_set
+
+    loaded = load_item_set(mixed_set)
+    plain = run_id_for(FakeTarget(), loaded, 2)
+    assert run_id_for(FakeTarget(), loaded, 2, vectors=None) == plain
+    one = run_id_for(FakeTarget(), loaded, 2, vectors={"direct", "indirect_doc"})
+    assert one != plain
+    assert one == run_id_for(FakeTarget(), loaded, 2, vectors=["indirect_doc", "direct"])
+
+
+async def test_consecutive_errors_abort_and_the_run_resumes(item_set: Path, tmp_path: Path) -> None:
+    from pecker_drum.campaign.graph import RunAborted
+
+    target = FakeTarget()
+    target.raise_for = {"t-002", "t-003"}
+    with pytest.raises(RunAborted, match="3 attempts in a row ended with an error"):
+        await run_campaign(target, config(item_set, tmp_path, max_consecutive_errors=3))
+    assert len(target.calls) == 5  # t-001 x2, then t-002 x2 and t-003 #1 fail in a row
+    assert checkpoint_files(tmp_path)  # finished attempts stay for a resume
+    target.raise_for = set()
+    target.calls.clear()
+    result = await run_campaign(target, config(item_set, tmp_path, max_consecutive_errors=3))
+    assert result.resumed
+    assert len(target.calls) == 2  # the aborted attempt is repeated, finished ones are not
+    assert result.report.overall.errors == 2  # t-002 x2; the aborted t-003 #1 ran again
+
+
+async def test_maximum_wall_time_aborts(item_set: Path, tmp_path: Path) -> None:
+    from pecker_drum.campaign.graph import RunAborted
+
+    target = FakeTarget()
+    target.block_on_call = 2
+    with pytest.raises(RunAborted, match=r"maximum wall time of 0\.2 s"):
+        await run_campaign(target, config(item_set, tmp_path, max_wall_time_s=0.2))
+    assert checkpoint_files(tmp_path)
+
+
+class Lifecycle:
+    def __init__(self) -> None:
+        self.events: list[str] = []
+        self.reason: str | None = None
+        self.refuse = False
+
+    async def begin_run(self, run_id: str) -> None:
+        self.events.append(f"begin {run_id}")
+        if self.refuse:
+            msg = "leftovers"
+            raise RuntimeError(msg)
+
+    async def end_run(self, run_id: str) -> None:
+        self.events.append(f"end {run_id}")
+
+    def abort_reason(self) -> str | None:
+        return self.reason
+
+
+async def test_lifecycle_brackets_every_run(item_set: Path, tmp_path: Path) -> None:
+    from pecker_drum.campaign.graph import RunAborted
+
+    hooks = Lifecycle()
+    result = await run_campaign(FakeTarget(), config(item_set, tmp_path, lifecycle=hooks))
+    assert hooks.events == [f"begin {result.run_id}", f"end {result.run_id}"]
+
+    hooks = Lifecycle()
+    hooks.reason = "a planted document could not be deleted"
+    with pytest.raises(RunAborted, match="could not be deleted"):
+        await run_campaign(FakeTarget(), config(item_set, tmp_path, lifecycle=hooks, fresh=True))
+    assert [e.split()[0] for e in hooks.events] == ["begin", "end"]
+
+    hooks = Lifecycle()
+    target = FakeTarget()
+    target.block_on_call = 1
+    run = asyncio.create_task(
+        run_campaign(target, config(item_set, tmp_path, lifecycle=hooks, fresh=True))
+    )
+    await asyncio.wait_for(target.blocked.wait(), timeout=10)
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    assert [e.split()[0] for e in hooks.events] == ["begin", "end"]  # Ctrl-C still ends the run
+
+    hooks = Lifecycle()
+    hooks.refuse = True
+    target = FakeTarget()
+    with pytest.raises(RuntimeError, match="leftovers"):
+        await run_campaign(target, config(item_set, tmp_path, lifecycle=hooks, fresh=True))
+    assert target.calls == []
+    assert len(hooks.events) == 1  # refused before anything ran: no end hook
