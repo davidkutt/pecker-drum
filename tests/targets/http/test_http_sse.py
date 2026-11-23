@@ -3,7 +3,7 @@ import pytest
 from pecker_drum.targets.http.sse import SseEvent, SseLimitError, SseParser
 
 STREAM = (
-    "﻿: comment line\n"
+    "\ufeff: comment line\n"
     'event: token\ndata: {"delta": "Grüße "}\n\n'
     'event: token\r\ndata: {"delta": "👋 done"}\r\n\r\n'
     "id: 7\nretry: 100\nevent: sources\ndata: line one\ndata: line two\n\n"

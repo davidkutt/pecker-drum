@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass
 
 _LINE_END = re.compile(r"\r\n|\r|\n")
-_BOM = "﻿"
+_BOM = "\ufeff"
 
 
 @dataclass(frozen=True, slots=True)
