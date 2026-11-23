@@ -6,6 +6,12 @@ events stream, approvals whose decision response is the stream that continues th
 document upload (multipart, with a required static field), listing (every user's documents in one
 list, tagged by file name) and deletion.
 
+Streams behave like a target that relays events as they arrive: a stream that asks for approval
+still ends with ``done``, and the pending approval is stored only after the stream's last event
+plus ``close_delay``, right before the server closes the response. A deny that arrives earlier
+gets 404. A client that disconnects before the close cancels the turn: its approvals are never
+stored.
+
 Like the fake models it is driven by an item's ``self_test``: in obedient mode it replays the
 item's tool calls (read tools emit a tool call, its result and the user's documents as sources;
 write tools ask for approval) and gives the item's answer; in safe mode it makes the same read
@@ -19,6 +25,8 @@ from __future__ import annotations
 
 import json
 import secrets
+import select
+import socket
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -41,6 +49,9 @@ REQUIRED_MODEL_FIELD = "model"
 REQUIRED_UPLOAD_FIELD = "collection"
 MAX_BODY = 8 * 1024 * 1024
 NO_SCRIPT_ANSWER = "The stand-in has no script for this message."
+
+
+_Events = list[tuple[str, dict[str, Any]]]
 
 
 class StubMode(StrEnum):
@@ -71,6 +82,9 @@ class StubOptions:
     """Echo the bearer token and the user's password in answers, sources and error bodies."""
     stall: float = 0.0
     """Seconds to wait inside a message stream before the answer."""
+    close_delay: float = 0.02
+    """Seconds between a stream's last event and its close. Pending approvals are stored at the
+    end of it, so a deny sent before the stream closed gets 404."""
     on_stream: Callable[[], None] | None = None
     """Called when a message stream starts (tests use it to simulate Ctrl-C)."""
 
@@ -117,6 +131,8 @@ class StubState:
     conversations: dict[str, str] = field(default_factory=dict[str, str])
     deleted_conversations: list[str] = field(default_factory=list[str])
     pending: dict[str, _Pending] = field(default_factory=dict[str, _Pending])
+    disconnects: int = 0
+    """Streams the client closed before the server did (their turns were cancelled)."""
     decisions: list[tuple[str, str, str]] = field(default_factory=list[tuple[str, str, str]])
     """``(approval id, decision, note)`` per decision request."""
     uploads: list[dict[str, list[str]]] = field(default_factory=list[dict[str, list[str]]])
@@ -243,9 +259,10 @@ class StubServer:
         steps.append(("answer", answer, {}))
         return _Turn(username, conversation, steps)
 
-    def play(self, turn: _Turn, token: str) -> list[tuple[str, dict[str, Any]]]:
-        """Events from the turn's position until it ends or pauses for an approval."""
-        events: list[tuple[str, dict[str, Any]]] = [("ping", {})]
+    def play(self, turn: _Turn, token: str) -> tuple[_Events, dict[str, _Pending]]:
+        """Events from the turn's position until it ends or pauses for an approval, and the
+        approvals to store when the stream closes."""
+        events: _Events = [("ping", {})]
         while turn.position < len(turn.steps):
             kind, name, arguments = turn.steps[turn.position]
             turn.position += 1
@@ -260,7 +277,7 @@ class StubServer:
                     for i, word in enumerate(words)
                 ]
                 events.append(("done", {}))
-                return events
+                return events, {}
             turn.calls += 1
             call_id = f"call-{turn.calls}"
             call_args = dict(arguments)
@@ -271,14 +288,14 @@ class StubServer:
             )
             if kind == "gated":
                 approval = f"appr-{secrets.token_hex(6)}"
-                self.state.pending[approval] = _Pending(turn, call_id, name, call_args)
                 events.append(
                     (
                         "approval_required",
                         {"approval_id": approval, "tool_call_id": call_id, "tool": name},
                     )
                 )
-                return events  # the stream ends; the decision response continues the turn
+                events.append(("done", {}))  # the decision response continues the turn
+                return events, {approval: _Pending(turn, call_id, name, call_args)}
             if kind == "refused":
                 events.append(("tool_result", {"tool_call_id": call_id, "status": "forbidden"}))
                 continue
@@ -295,15 +312,15 @@ class StubServer:
                     documents.append({"id": "debug", "title": "debug", "text": f"token {token}"})
                 events.append(("sources", {"documents": documents}))
         events.append(("done", {}))
-        return events
+        return events, {}
 
     def resume(
         self, approval: str, decision: str, token: str
-    ) -> list[tuple[str, dict[str, Any]]] | None:
+    ) -> tuple[_Events, dict[str, _Pending]] | None:
         pending = self.state.pending.pop(approval, None)
         if pending is None:
             return None
-        events: list[tuple[str, dict[str, Any]]] = []
+        events: _Events = []
         if self.options.replay_denied:
             events.append(
                 (
@@ -317,7 +334,8 @@ class StubServer:
             )
         status = "ok" if decision == "approve" else "rejected"
         events.append(("tool_result", {"tool_call_id": pending.call_id, "status": status}))
-        return events + self.play(pending.turn, token)
+        more, approvals = self.play(pending.turn, token)
+        return events + more, approvals
 
     def list_documents(self) -> list[dict[str, Any]]:
         listed: list[dict[str, Any]] = []
@@ -369,7 +387,9 @@ class _Handler(BaseHTTPRequestHandler):
         with self.stub.lock:
             self.stub.state.requests.append((self.command, urlsplit(self.path).path, status))
 
-    def _stream(self, events: list[tuple[str, dict[str, Any]]]) -> None:
+    def _stream(self, events: _Events, approvals: dict[str, _Pending]) -> None:
+        """Write the events, wait ``close_delay``, store the approvals, then close (the handler
+        returns). A client that disconnected before that cancels the turn."""
         options = self.stub.options
         newline = "\r\n" if options.crlf else "\n"
         self.send_response(HTTPStatus.OK)
@@ -396,7 +416,25 @@ class _Handler(BaseHTTPRequestHandler):
                 self.wfile.write(payload[start : start + size])
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
+            self._disconnected()
             return
+        if self._client_left(options.close_delay):
+            self._disconnected()
+            return
+        with self.stub.lock:
+            self.stub.state.pending.update(approvals)
+
+    def _client_left(self, wait: float) -> bool:
+        """Wait up to ``wait`` seconds; True if the client closed the connection meanwhile."""
+        try:
+            readable, _, _ = select.select([self.connection], [], [], wait)
+            return bool(readable) and self.connection.recv(1, socket.MSG_PEEK) == b""
+        except OSError:
+            return True
+
+    def _disconnected(self) -> None:
+        with self.stub.lock:
+            self.stub.state.disconnects += 1
 
     def _json_body(self) -> dict[str, Any] | None:
         try:
@@ -544,8 +582,8 @@ class _Handler(BaseHTTPRequestHandler):
         if stub.options.on_stream is not None:
             stub.options.on_stream()
         with stub.lock:
-            events = stub.play(stub.script(username, conversation, content), token)
-        self._stream(events)
+            events, approvals = stub.play(stub.script(username, conversation, content), token)
+        self._stream(events, approvals)
 
     def _decision(self, approval: str) -> None:
         found = self._user()
@@ -559,11 +597,11 @@ class _Handler(BaseHTTPRequestHandler):
         stub = self.stub
         with stub.lock:
             stub.state.decisions.append((approval, decision, str(body.get("note", ""))))
-            events = stub.resume(approval, decision, found[1])
-        if events is None:
+            resumed = stub.resume(approval, decision, found[1])
+        if resumed is None:
             self._send(HTTPStatus.NOT_FOUND, {"error": "no such approval"})
             return
-        self._stream(events)
+        self._stream(*resumed)
 
     def _upload(self) -> None:
         found = self._user()

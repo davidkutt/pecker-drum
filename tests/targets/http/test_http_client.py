@@ -3,7 +3,13 @@ import json
 import httpx
 import pytest
 
-from pecker_drum.targets.http.client import HttpSession, RateLimiter, Redactor, TargetError
+from pecker_drum.targets.http.client import (
+    HttpSession,
+    RateLimiter,
+    Redactor,
+    TargetError,
+    TargetTimeoutError,
+)
 from pecker_drum.targets.http.config import HttpTargetConfig
 
 
@@ -141,3 +147,12 @@ async def test_transport_errors_become_target_errors(example_config: HttpTargetC
             TargetError, match="create conversation: ConnectError: connection refused"
         ):
             await http.call("create conversation", "POST", http.url("/c"))
+
+
+async def test_a_timeout_is_a_target_timeout_error(example_config: HttpTargetConfig) -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("no bytes")
+
+    async with session(example_config, httpx.MockTransport(handle)) as http:
+        with pytest.raises(TargetTimeoutError, match="list documents: ReadTimeout"):
+            await http.call("list documents", "GET", http.url("/d"))

@@ -216,8 +216,10 @@ stand-in. A strict schema rejects unknown keys at every level.
   fields are templated value by value.
 - **Login:** OIDC password grant per `item.user.sub`, refreshed before expiry (refresh token, else
   the password).
-- **Streams:** the send response is a server-sent-events stream; after an approval request the
-  harness denies it, and the deny response is a new stream that continues the turn. Events map by
+- **Streams:** the send response is a server-sent-events stream. Every stream is read until the
+  server closes it (`done` is a marker; after it the harness waits at most `timeouts.read`).
+  Approval requests are collected while a stream is read and denied, in the order received,
+  after it has closed; each deny response is a new stream that continues the turn. Events map by
   event name or a type field, with dotted field paths; unknown events are ignored, malformed
   mapped events are an error. Tool result statuses map to `executed`, `denied` (rejected),
   `refused` or `failed`; a call the harness denied stays denied when it is replayed.

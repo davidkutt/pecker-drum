@@ -41,8 +41,17 @@ which stream shapes to support, transport rules, secrets, and leftovers.
    password. A login error names the status code, never the response body.
 5. **Streams.**
    - The response to the send request is the event stream of the turn.
-   - After an approval request the harness sends the deny request (a JSON body). Its response is
-     a new stream that continues the turn and is read after the current one ends.
+   - Every stream is read until the server closes it. `done` is a marker, not the end of
+     reading: David's target relays events as they arrive, sends `done` after
+     `approval_required`, stores the turn and its pending approvals only after its upstream has
+     finished, and then closes the response. A client that disconnects early cancels the run on
+     the server. After `done` the harness waits at most `timeouts.read` for the close; a stream
+     the server keeps open longer is ended without an error.
+   - Approval requests are collected while a stream is read. The deny request (a JSON body) is
+     sent after the current stream has closed, one per approval in the order received. Each deny
+     response is a new stream that continues the turn and is read the same way. A call counts
+     as denied once the target accepted the deny request; a deny that fails (for example 404)
+     ends the attempt with an error and leaves the call `proposed`.
    - There is no separate stream request and no stream that continues by itself after a deny;
      David's target needs neither.
    - The parser follows the WHATWG event-stream rules. Events are matched by their `event:` name
@@ -136,6 +145,8 @@ which stream shapes to support, transport rules, secrets, and leftovers.
 - What an HTTP target can't show is reported, not guessed: a target without tool-result events
   makes `tool_executed` items `unobservable` instead of `blocked`.
 - **Limits:**
+  - A target that keeps a stream open for more than `timeouts.read` after `done` is
+    disconnected; if it cancels the turn on a disconnect, a deny that follows fails.
   - Each tool call must arrive as one complete event.
   - Tool results without a status field count as executed.
   - Sources come only from source events, not from tool-result text.

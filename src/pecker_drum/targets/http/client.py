@@ -47,6 +47,10 @@ class TargetError(Exception):
         """The HTTP status code, when the target answered."""
 
 
+class TargetTimeoutError(TargetError):
+    """The target sent no bytes within the request timeout (``timeouts.read``)."""
+
+
 class Redactor:
     """Knows every secret of a run (passwords, client secret, tokens) and removes them."""
 
@@ -158,7 +162,10 @@ class HttpSession:
 
     def _failure(self, step: str, exc: httpx.HTTPError) -> TargetError:
         detail = self._redact(str(exc))[:ERROR_BODY_CHARS]
-        return TargetError(f"{step}: {type(exc).__name__}" + (f": {detail}" if detail else ""))
+        message = f"{step}: {type(exc).__name__}" + (f": {detail}" if detail else "")
+        if isinstance(exc, httpx.TimeoutException):
+            return TargetTimeoutError(message)
+        return TargetError(message)
 
     def _status_error(self, step: str, status: int, body: bytes, *, show_body: bool) -> TargetError:
         message = f"{step}: HTTP {status}"

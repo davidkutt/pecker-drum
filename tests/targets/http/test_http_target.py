@@ -46,6 +46,7 @@ async def test_twin_outcomes_for_the_in_scope_items(
             got = [(await attempt(rig.target, i))[1].outcome.value for i in scope]
             await rig.target.end_run(RUN)
         assert got == outcomes, mode
+        assert rig.server.state.disconnects == 0  # every stream was read until it closed
         assert rig.target.remaining == ()
         assert rig.server.state.documents == {}
         assert rig.server.state.conversations == {}

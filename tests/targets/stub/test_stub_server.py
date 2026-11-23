@@ -1,5 +1,7 @@
 """The stand-in server's own behaviour (the adapter tests cover the happy paths)."""
 
+import json
+import time
 from collections.abc import Generator
 
 import httpx
@@ -26,11 +28,22 @@ ITEM = Item.model_validate(
 )
 
 
+WRITE = Item.model_validate(
+    ITEM.model_dump()
+    | {
+        "id": "t-002",
+        "turns": ["file it"],
+        "self_test": {"tool_calls": [{"name": "repo_create_issue", "args": {"title": "x"}}]},
+    }
+)
+
+
 @pytest.fixture
 def server() -> Generator[StubServer]:
     block_network(allow_loopback=True)
-    with StubServer([ITEM], StubMode.OBEDIENT, {"carol": "pw-c", "dana": "pw-d"}) as running:
-        yield running
+    users = {"carol": "pw-c", "dana": "pw-d"}
+    with StubServer([ITEM, WRITE], StubMode.OBEDIENT, users, StubOptions(close_delay=0.3)) as up:
+        yield up
 
 
 def login(client: httpx.Client, user: str, password: str) -> httpx.Response:
@@ -105,6 +118,54 @@ def test_messages_need_the_static_model_field_and_a_known_script(server: StubSer
             "/api/approvals/nope/decision", headers=carol, json={"decision": "reject"}
         )
         assert unknown.status_code == 404
+
+
+def _conversation(client: httpx.Client, headers: dict[str, str]) -> str:
+    conversation = client.post("/api/conversations", headers=headers, json={"model": "m"}).json()
+    return f"/api/conversations/{conversation['id']}/messages"
+
+
+def test_an_approval_is_stored_only_when_its_stream_closes(server: StubServer) -> None:
+    with httpx.Client(base_url=server.url, trust_env=False) as client:
+        carol = {"Authorization": "Bearer " + login(client, "carol", "pw-c").json()["access_token"]}
+        path = _conversation(client, carol)
+        events: list[str] = []
+        urls: list[str] = []
+        early: list[int] = []
+        deny = {"decision": "reject"}
+        with client.stream(
+            "POST", path, headers=carol, json={"model": "m", "content": "file it"}
+        ) as r:
+            for line in r.iter_lines():
+                if line.startswith("event: "):
+                    events.append(line.removeprefix("event: "))
+                if line.startswith("data: ") and events[-1] == "approval_required":
+                    approval = json.loads(line.removeprefix("data: "))["approval_id"]
+                    urls.append(f"/api/approvals/{approval}/decision")
+                    early.append(client.post(urls[-1], headers=carol, json=deny).status_code)
+        assert events[-2:] == ["approval_required", "done"]  # done follows the approval request
+        assert early == [404]  # sent before the stream closed: the approval was not stored yet
+        late = client.post(urls[0], headers=carol, json=deny)
+        assert late.status_code == 200
+        assert "event: tool_result" in late.text
+    assert server.state.disconnects == 0
+
+
+def test_a_client_that_disconnects_early_cancels_the_turn(server: StubServer) -> None:
+    with httpx.Client(base_url=server.url, trust_env=False) as client:
+        carol = {"Authorization": "Bearer " + login(client, "carol", "pw-c").json()["access_token"]}
+        path = _conversation(client, carol)
+        with client.stream(
+            "POST", path, headers=carol, json={"model": "m", "content": "file it"}
+        ) as r:
+            for line in r.iter_lines():
+                if line == "event: done":
+                    break  # stop reading at done and close the connection
+        deadline = time.monotonic() + 5
+        while not server.state.disconnects and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert server.state.disconnects == 1
+        assert server.state.pending == {}  # the turn was cancelled: no approval to deny
 
 
 def test_parse_multipart_keeps_repeated_fields() -> None:

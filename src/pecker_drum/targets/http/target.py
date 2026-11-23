@@ -2,9 +2,10 @@
 
 Per attempt: plant the item's ``doc:`` fixtures (the tag ``drum-fixture-<run id>`` in the file
 name and title), wait until the list endpoint reports them indexed, create a conversation, send
-the turns, deny every approval request (the deny response is a new event stream that continues
-the turn), then delete the documents and the conversation in a ``finally``, also after an error or
-Ctrl-C. A document that cannot be deleted stops the run after the attempt.
+the turns, deny every approval request once its stream has closed (the deny response is a new
+event stream that continues the turn), then delete the documents and the conversation in a
+``finally``, also after an error or Ctrl-C. A document that cannot be deleted stops the run after
+the attempt.
 
 Per run (``RunLifecycle``): refuse to start while any ``drum-fixture-*`` document exists, and at
 the end delete what is left with this run's tag and list again; ``remaining`` holds what is still
@@ -20,7 +21,7 @@ import re
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from contextlib import AsyncExitStack, aclosing
+from contextlib import AbstractAsyncContextManager, aclosing
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -41,7 +42,14 @@ from pecker_drum.observation import (
     Usage,
 )
 from pecker_drum.targets.http.auth import TokenManager, read_secrets
-from pecker_drum.targets.http.client import Clock, HttpSession, Redactor, Sleep, TargetError
+from pecker_drum.targets.http.client import (
+    Clock,
+    HttpSession,
+    Redactor,
+    Sleep,
+    TargetError,
+    TargetTimeoutError,
+)
 from pecker_drum.targets.http.config import HttpTargetConfig
 from pecker_drum.targets.http.events import (
     AnswerDelta,
@@ -653,44 +661,79 @@ class HttpTarget:
         return conversation
 
     async def _turn(self, sub: str, values: dict[str, str], collector: _Collector) -> None:
-        """Send one turn and read its streams: the reply, then one continuation per deny."""
+        """Send one turn and read its streams: the reply, then one continuation per deny.
+
+        Every stream is read until the server closes it; ``done`` is a marker, not the end of
+        reading. Approval requests are collected while a stream is read; once it has closed,
+        each is denied in the order received, and each deny response is the next stream
+        (ADR 0009). A target may store a turn and its pending approvals only when its stream
+        ends, and may cancel the turn when the client disconnects early."""
         send = self.config.chat.send
         collector.turns.append([])
-        async with AsyncExitStack() as stack:
-            first = await stack.enter_async_context(
-                self._session.stream(
-                    "send message",
-                    send.method,
-                    self._session.url(render_path(send.path, values)),
-                    token=await self._tokens.token_for(sub),
-                    json_body=render_json(send.body, values) if send.body is not None else None,
-                )
+        pending: deque[ApprovalRequested] = deque()
+        reply = self._session.stream(
+            "send message",
+            send.method,
+            self._session.url(render_path(send.path, values)),
+            token=await self._tokens.token_for(sub),
+            json_body=render_json(send.body, values) if send.body is not None else None,
+        )
+        await self._read_stream("send message", reply, collector, pending)
+        while pending:
+            approval = pending.popleft()
+            continuation = await self._deny(sub, values, approval)
+            await self._read_stream(
+                "approval deny",
+                continuation,
+                collector,
+                pending,
+                accepted=lambda a=approval: collector.denied(a, "denied by the harness"),
             )
-            queue: deque[tuple[str, AsyncGenerator[SseEvent]]] = deque([("send message", first)])
-            while queue:
-                step, events = queue.popleft()
-                done = paused = False
-                async with aclosing(events) as stream:
-                    async for event in stream:
-                        mapped = self._mapper.map(event)
-                        if isinstance(mapped, ApprovalRequested):
-                            paused = True
-                            queue.append(
-                                ("approval deny", await self._deny(sub, values, mapped, stack))
-                            )
-                            collector.denied(mapped, "denied by the harness")
-                        elif isinstance(mapped, StreamDone):
+
+    async def _read_stream(
+        self,
+        step: str,
+        opened: AbstractAsyncContextManager[AsyncGenerator[SseEvent]],
+        collector: _Collector,
+        pending: deque[ApprovalRequested],
+        accepted: Callable[[], None] | None = None,
+    ) -> None:
+        """Read one stream until the server closes it, at most ``timeouts.read`` after ``done``.
+
+        ``accepted`` runs once the target has answered the request with a stream (2xx). A
+        stream that the server keeps open after ``done`` is ended without an error."""
+        done = paused = False
+        linger = asyncio.timeout(None)
+        try:
+            async with linger, opened as events, aclosing(events) as stream:
+                if accepted is not None:
+                    accepted()
+                async for event in stream:
+                    mapped = self._mapper.map(event)
+                    if isinstance(mapped, ApprovalRequested):
+                        paused = True
+                        pending.append(mapped)
+                    elif isinstance(mapped, StreamDone):
+                        if not done:
                             done = True
-                            break
-                        elif mapped is not None:
-                            collector.add(mapped)
-                if self.config.events.done is not None and not done and not paused:
-                    msg = f"{step}: the stream ended before the done event"
-                    raise TargetError(msg)
+                            loop = asyncio.get_running_loop()
+                            linger.reschedule(loop.time() + self.config.timeouts.read)
+                    elif mapped is not None:
+                        collector.add(mapped)
+        except TimeoutError:
+            if not linger.expired():
+                raise
+        except TargetTimeoutError:
+            if not done:
+                raise
+        if self.config.events.done is not None and not done and not paused:
+            msg = f"{step}: the stream ended before the done event"
+            raise TargetError(msg)
 
     async def _deny(
-        self, sub: str, values: dict[str, str], approval: ApprovalRequested, stack: AsyncExitStack
-    ) -> AsyncGenerator[SseEvent]:
+        self, sub: str, values: dict[str, str], approval: ApprovalRequested
+    ) -> AbstractAsyncContextManager[AsyncGenerator[SseEvent]]:
+        """The deny request; nothing is sent until the returned stream is entered."""
         approvals = self.config.approvals
         if approvals is None:  # pragma: no cover - the config requires [approvals]
             msg = "approval requested, but the target config has no [approvals]"
@@ -701,14 +744,12 @@ class HttpTarget:
             "tool_call_id": approval.tool_call_id or "",
             "tool": approval.tool or "",
         }
-        return await stack.enter_async_context(
-            self._session.stream(
-                "approval deny",
-                deny.method,
-                self._session.url(render_path(deny.path, deny_values)),
-                token=await self._tokens.token_for(sub),
-                json_body=render_json(deny.body, deny_values) if deny.body is not None else None,
-            )
+        return self._session.stream(
+            "approval deny",
+            deny.method,
+            self._session.url(render_path(deny.path, deny_values)),
+            token=await self._tokens.token_for(sub),
+            json_body=render_json(deny.body, deny_values) if deny.body is not None else None,
         )
 
 

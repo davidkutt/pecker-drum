@@ -107,10 +107,10 @@ tool = "tool"
 names = ["error"]
 message = "message"
 
-[events.done]
-names = ["done"]
+[events.done]                          # a marker: the stream is still read until the server closes it
+names = ["done"]                       # (at most timeouts.read longer)
 
-# -- approvals: every approval is denied; the deny response is the stream that continues the turn --
+# -- approvals: each is denied after its stream closed; the deny response continues the turn ----
 
 [approvals]
 gated_tools = ["repo_create_issue", "kb_ingest_url"]   # only for the self-test's expectation

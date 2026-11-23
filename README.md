@@ -186,8 +186,9 @@ that finished before M1.5 keep no record and have to be run again.
 ### Attack your own API target
 
 The HTTP target adapter (M2, [ADR 0009](docs/adr/0009-http-target-adapter-and-unobservable.md))
-logs in as test users, plants the item's documents, asks over a streamed response, denies every
-approval, and deletes what it planted, also after an error or Ctrl-C. A TOML file describes the
+logs in as test users, plants the item's documents, asks over a streamed response (read until the
+target closes it), denies every approval once its stream has closed, and deletes what it planted,
+also after an error or Ctrl-C. A TOML file describes the
 target's API; [docs/examples/http-target.toml](docs/examples/http-target.toml) documents every key.
 
 First the stand-in server, a local API target with exactly the example's shape. Its self-test gives
