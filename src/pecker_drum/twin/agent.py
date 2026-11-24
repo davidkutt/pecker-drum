@@ -23,6 +23,7 @@ from pecker_drum.items.schema import User
 from pecker_drum.observation import (
     ApprovalRecord,
     Observation,
+    PlantedFixture,
     Source,
     ToolCallRecord,
     ToolCallStatus,
@@ -90,7 +91,11 @@ def _usage(messages: Sequence[BaseMessage], latency_s: float) -> Usage:
 
 
 def build_observation(
-    messages: Sequence[BaseMessage], trace: _Trace, latency_s: float, error: str | None
+    messages: Sequence[BaseMessage],
+    trace: _Trace,
+    latency_s: float,
+    error: str | None,
+    planted: Sequence[PlantedFixture] = (),
 ) -> Observation:
     results = {m.tool_call_id: m for m in messages if isinstance(m, ToolMessage)}
     calls: list[ToolCallRecord] = []
@@ -119,6 +124,7 @@ def build_observation(
     return Observation(
         answer="\n\n".join(answer for answer in trace.answers if answer),
         sources=tuple(sources),
+        planted=tuple(planted),
         tool_calls=tuple(calls),
         approvals=tuple(trace.rejected[c.id] for c in calls if c.id in trace.rejected),
         usage=_usage(messages, latency_s),
@@ -178,7 +184,9 @@ class Twin:
         last = messages[-1] if messages else None
         trace.answers.append(_text(last) if isinstance(last, AIMessage) else "")
 
-    async def run(self, user: User, turns: Sequence[str]) -> Observation:
+    async def run(
+        self, user: User, turns: Sequence[str], planted: Sequence[PlantedFixture] = ()
+    ) -> Observation:
         trace = _Trace()
         started = time.perf_counter()
         error: str | None = None
@@ -188,4 +196,4 @@ class Twin:
         except Exception as exc:  # the target failed; record it, never re-raise into the run
             error = f"{type(exc).__name__}: {str(exc)[:_ERROR_CHARS]}"
         messages = await self._messages()
-        return build_observation(messages, trace, time.perf_counter() - started, error)
+        return build_observation(messages, trace, time.perf_counter() - started, error, planted)

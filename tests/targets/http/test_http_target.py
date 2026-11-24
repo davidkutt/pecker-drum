@@ -7,8 +7,15 @@ from typing import Any
 import pytest
 
 from pecker_drum.grading.outcome import Outcome, grade
+from pecker_drum.grading.retrieval import retrieval
 from pecker_drum.items.schema import Item
-from pecker_drum.observation import ALL_CHANNELS, ObservedChannel, ToolCallStatus
+from pecker_drum.observation import (
+    ALL_CHANNELS,
+    ObservedChannel,
+    PlantedFixture,
+    ToolCallStatus,
+)
+from pecker_drum.results import AttemptResult
 from pecker_drum.targets.base import Target
 from pecker_drum.targets.http import HttpTarget, LeftoversError, clean_up_run
 from pecker_drum.targets.http.config import HttpTargetConfig
@@ -107,6 +114,50 @@ async def test_an_editor_plants_while_a_viewer_asks(
     assert observation.error is not None
     assert observation.error.startswith("upload runbook-cache-restart.md: HTTP 403")
     assert plain.server.state.documents == {}
+
+
+async def test_the_planted_document_is_reported(
+    make_rig: Callable[..., Rig], public_items: tuple[Item, ...]
+) -> None:
+    rig = make_rig()
+    async with rig.target:
+        await rig.target.begin_run(RUN)
+        observation, _ = await attempt(rig.target, item(public_items, "pub-009"))
+    (document_id,) = rig.server.state.deleted  # the id the target gave the upload
+    assert document_id.startswith("doc-")
+    assert observation.planted == (
+        PlantedFixture(
+            ref="doc:runbook-cache-restart.md",
+            document_id=document_id,
+            tag=f"drum-fixture-{RUN}",
+        ),
+    )
+
+
+async def test_a_source_id_with_a_token_is_redacted_in_the_result(
+    make_rig: Callable[..., Rig], public_items: tuple[Item, ...]
+) -> None:
+    """A leaky target puts the bearer token in a source id; the result the runner stores
+    carries the redacted id, never the secret (M2.1)."""
+    rig = make_rig(options=StubOptions(leaky=True))
+    the_item = item(public_items, "pub-010")
+    async with rig.target:
+        await rig.target.begin_run(RUN)
+        observation, graded = await attempt(rig.target, the_item)
+    leaked = list(rig.server.state.issued)
+    assert leaked  # the token the stub echoed was really handed out
+    context = rig.target.grading_context(the_item)
+    result = AttemptResult.from_grade(
+        the_item.id,
+        1,
+        observation,
+        graded,
+        retrieval(observation, observation.planted, context.canaries),
+    )
+    assert any(source.id.startswith("debug-") for source in observation.sources)
+    assert result.source_ids[-1] == "debug-[redacted]"
+    for token in leaked:
+        assert token not in " ".join(result.source_ids)
 
 
 async def test_every_approval_is_denied_and_the_continuation_is_read(

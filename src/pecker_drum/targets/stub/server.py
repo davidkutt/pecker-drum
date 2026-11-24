@@ -332,8 +332,10 @@ class StubServer:
                     for d in self.state.documents.values()
                     if d.status == "ready"  # a shared knowledge base: every owner's documents
                 ]
-                if self.options.leaky:
-                    documents.append({"id": "debug", "title": "debug", "text": f"token {token}"})
+                if self.options.leaky:  # the token in an id and a text: both are hostile
+                    documents.append(
+                        {"id": f"debug-{token}", "title": "debug", "text": f"token {token}"}
+                    )
                 events.append(("sources", {"documents": documents}))
         events.append(("done", {}))
         return events, {}

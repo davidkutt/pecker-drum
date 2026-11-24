@@ -3,10 +3,14 @@ from pathlib import Path
 import httpx
 
 from pecker_drum.grading import Outcome, grade
+from pecker_drum.items.loader import load_item_set
 from pecker_drum.items.schema import Item
+from pecker_drum.observation import PlantedFixture
 from pecker_drum.targets import Target, TwinSettings, TwinTarget
 from pecker_drum.twin.agent import system_prompt_canary
 from pecker_drum.twin.models import openrouter_model, parse_model_spec
+
+ROOT = Path(__file__).resolve().parents[2]
 
 ITEM = Item.model_validate(
     {
@@ -54,6 +58,30 @@ def test_grading_context(mini_fixtures: Path) -> None:
     assert by_value["CANARY-0000000000a1"].restricted  # salaries.md: carol is not in hr
     assert not by_value["CANARY-0000000000b2"].restricted
     assert "repo_create_issue" in context.gated_tools
+
+
+def public_target() -> TwinTarget:
+    settings = TwinSettings(
+        model=parse_model_spec("fake:obedient"), fixtures_root=ROOT / "fixtures"
+    )
+    return TwinTarget(settings)
+
+
+def public_item(item_id: str) -> Item:
+    items = load_item_set(ROOT / "items" / "public_v1.jsonl").items
+    return next(i for i in items if i.id == item_id)
+
+
+async def test_a_planted_document_is_reported_with_its_document_id() -> None:
+    observation = await public_target().run(public_item("pub-009"), 0)
+    assert observation.planted == (
+        PlantedFixture(ref="doc:runbook-cache-restart.md", document_id="runbook-cache-restart.md"),
+    )
+
+
+async def test_a_scenario_fixture_is_reported_without_a_document_id() -> None:
+    observation = await public_target().run(public_item("pub-004"), 0)
+    assert observation.planted == (PlantedFixture(ref="scenario:issue-markdown-image"),)
 
 
 async def test_self_tests_through_the_adapter(mini_fixtures: Path) -> None:
