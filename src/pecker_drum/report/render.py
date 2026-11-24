@@ -30,7 +30,7 @@ from pecker_drum.report.stats import (
     item_stats,
     percentile,
 )
-from pecker_drum.results import AttemptResult, JudgeLabel, RunInfo
+from pecker_drum.results import AttemptResult, JudgeLabel, RetrievalState, RunInfo
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +287,32 @@ def _bound(stat: ItemStats) -> str:
     return "" if bound is None else f"0/{stat.valid}, ≤ {pct_up(bound)}"
 
 
+_KNOWN_RETRIEVAL = (RetrievalState.RETRIEVED, RetrievalState.NOT_RETRIEVED)
+"""The two states that count: ``unknown`` and ``null`` (nothing planted, before M2.1) do not."""
+
+
+def _retrieval_cell(results: Sequence[AttemptResult]) -> str:
+    """``2/3``, ``2/3 (1 unknown)`` or ``—``: attempts whose sources held the planted fixture.
+
+    Unknown states are counted but stay out of the denominator, so a target that exposes no
+    sources shows ``—`` instead of a misleading zero. This is a count, not a rate: no interval.
+    """
+    known = [r.retrieved for r in results if r.retrieved in _KNOWN_RETRIEVAL]
+    if not known:
+        return "—"
+    cell = f"{known.count(RetrievalState.RETRIEVED)}/{len(known)}"
+    unknown = sum(1 for r in results if r.retrieved is RetrievalState.UNKNOWN)
+    return f"{cell} ({unknown} unknown)" if unknown else cell
+
+
+def _retrieval_cells(results: Sequence[AttemptResult]) -> dict[str, str]:
+    """The ``Retrieved`` cell per item id, from the attempt-level states."""
+    by_item: dict[str, list[AttemptResult]] = {}
+    for result in results:
+        by_item.setdefault(result.item_id, []).append(result)
+    return {item_id: _retrieval_cell(mine) for item_id, mine in by_item.items()}
+
+
 def _asr1(agg: Aggregate) -> str:
     return estimate(agg.asr1, agg.asr1_ci, agg.asr1_method, agg.successes, agg.attempts)
 
@@ -489,18 +515,31 @@ def render_markdown(report: Report) -> str:
     out += _unobservable_header(report)
     out += _contradiction_header(report)
     unobs = report.overall.unobservable > 0
+    retrieved = any(result.retrieved in _KNOWN_RETRIEVAL for result in report.results)
+    cells = _retrieval_cells(report.results)
     out += [
         "",
         "Excerpts are escaped and cut to 120 characters. Rates exclude errors"
         f"{' and unobservable attempts' if unobs else ''}. Full answers of success and contained "
-        "attempts are at the end, inside fenced code blocks.",
+        "attempts are at the end, inside fenced code blocks."
+        + (
+            " Retrieved counts the attempts whose sources included a planted fixture, out of the"
+            " attempts with a known state; unknown states are not counted, and every attempt's"
+            " source ids and state are in the JSON report and the run record."
+            if retrieved
+            else ""
+        ),
         "",
         "## Per item",
         "",
-        "| Item | Title | Vector | Severity | Successes | Contained | Blocked | Errors "
+        "| Item | Title | Vector | Severity "
+        + ("| Retrieved " if retrieved else "")
+        + "| Successes | Contained | Blocked | Errors "
         f"|{' Unobservable |' if unobs else ''} ASR@1 |{f' ASR@{k} |' if k > 1 else ''} "
         "0/n upper bound |",
-        "| --- | --- | --- | --- | ---: | ---: | ---: | ---: |"
+        "| --- | --- | --- | --- |"
+        + (" ---: |" if retrieved else "")
+        + " ---: | ---: | ---: | ---: |"
         + (" ---: |" if unobs else "")
         + " --- |"
         + (" --- |" if k > 1 else "")
@@ -511,7 +550,8 @@ def render_markdown(report: Report) -> str:
         item = by_id[stat.item_id]
         out.append(
             f"| {stat.item_id} | {_cell(item.title)} | {item.vector.value} | {item.severity.value} "
-            f"| {stat.successes} | {stat.contained} | {stat.blocked} | {stat.errors} |"
+            + (f"| {cells.get(stat.item_id, '—')} " if retrieved else "")
+            + f"| {stat.successes} | {stat.contained} | {stat.blocked} | {stat.errors} |"
             + (f" {stat.unobservable} |" if unobs else "")
             + f" {_rate(stat.successes, stat.valid)} |"
             + (f" {pct(stat.asr(k))} |" if k > 1 else "")

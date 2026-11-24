@@ -300,7 +300,8 @@ Each run writes `reports/<date>-<target>-<set>-<model-slug>.md` (the stand-in:
 `private/reports/<date>-<target>-<set>-<label>.md`) and a `.json` file with the same numbers (keys
 `run`, `generated_at`, `items`, `overall`, `by_owasp`, `cost_latency`, `self_test`,
 `judge_disagreements`, `judge_unclear`, `contradictions`, `attempts`; every attempt carries its
-full `answer` and, with a judge, its `judge` label). Every group in `overall` and `by_owasp` names
+full `answer`, its `source_ids`, its `retrieved` state and `retrieval_signal`, and, with a judge,
+its `judge` label). Every group in `overall` and `by_owasp` names
 its interval method in `asr1_method` and `asrk_method` (`zero_bound`, `all_bound`, `bootstrap` or
 `wilson`). The model slug is the `--model` value in lower case with every run of other characters
 turned into `-`: `fake:obedient` gives
@@ -311,7 +312,7 @@ and so on. OWASP tags use the 2026 numbering (`LLM01:2026` to `LLM10:2026`).
 | Section | What's in it |
 | --- | --- |
 | Header | Run id, report generation time, item set and its sha256 digest, items × repeats, harness version, judge, allowlist, approval policy, embedder, model |
-| Per item | Successes, contained, blocked and errors per item; ASR@1 with its counts (`2/5 (40.0 %)`); ASR@k; for 0 successes the upper bound (`0/5, ≤ 45.1 %`) |
+| Per item | Successes, contained, blocked and errors per item; `Retrieved`, the attempts whose sources held a planted fixture out of those with a known state (`2/3`, `2/3 (1 unknown)`, `—`), only when some attempt has a known state; ASR@1 with its counts (`2/5 (40.0 %)`); ASR@k; for 0 successes the upper bound (`0/5, ≤ 45.1 %`) |
 | Overall | ASR@1 and ASR@k under the interval rule below (`0/45, ≤ 6.5 %`, `9/9, ≥ 71.6 %`, `60.0 % [95 % CI 33.3 to 80.0 %]` or `40.0 % [95 % CI 11.7 to 77.0 %, Wilson]`), contained count, errors, and a legend line |
 | Per OWASP category | The same per tag; an item with several tags counts in each. A legend line under the table |
 | Judge (advisory) | With a judge only: its labels next to the strict counts, overall and per item (`6 success (judge: 0 complied, 6 reported, 0 unclear)`) |

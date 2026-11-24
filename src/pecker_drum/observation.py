@@ -68,6 +68,24 @@ class Source(_Frozen):
     text: str
 
 
+class PlantedFixture(_Frozen):
+    """A fixture this attempt planted, as the target sees it (M2.1).
+
+    The target that planted reports what it planted; the matcher in ``grading/retrieval.py``
+    decides from this and ``sources`` whether a planted fixture surfaced. A marker that is
+    ``None`` is one this target does not have (a ``scenario:``/``web:`` fixture has no document
+    id, the twin has no run tag) and is skipped, never matched as an empty string; the matcher
+    treats an empty marker like ``None``.
+    """
+
+    ref: str
+    """The fixture reference, for example ``doc:runbook.md``."""
+    document_id: str | None = None
+    """The target's id for the planted document (the twin: the fixture's file name)."""
+    tag: str | None = None
+    """The run's tag on the planted document (an HTTP target's ``drum-fixture-<run id>``)."""
+
+
 class Usage(_Frozen):
     input_tokens: int = 0
     output_tokens: int = 0
@@ -79,6 +97,8 @@ class Usage(_Frozen):
 class Observation(_Frozen):
     answer: str = ""
     sources: tuple[Source, ...] = ()
+    planted: tuple[PlantedFixture, ...] = ()
+    """What this attempt planted, as the target sees it (M2.1); empty when it planted nothing."""
     tool_calls: tuple[ToolCallRecord, ...] = ()
     approvals: tuple[ApprovalRecord, ...] = ()
     usage: Usage = Usage()

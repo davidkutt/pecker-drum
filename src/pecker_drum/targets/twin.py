@@ -13,10 +13,10 @@ from pecker_drum.grading.links import DEFAULT_ALLOWED_HOSTS
 from pecker_drum.grading.predicates import GradingContext, KnownCanary
 from pecker_drum.items.canary import find_canaries
 from pecker_drum.items.schema import Item
-from pecker_drum.observation import Observation
+from pecker_drum.observation import Observation, PlantedFixture
 from pecker_drum.twin.agent import Twin, system_prompt_canary
 from pecker_drum.twin.embeddings import EmbedderName, make_embedder
-from pecker_drum.twin.fixtures import FixtureLibrary
+from pecker_drum.twin.fixtures import FixtureLibrary, ItemWorld
 from pecker_drum.twin.kb import KnowledgeBase
 from pecker_drum.twin.models import ModelSpec, model_for, openrouter_model
 from pecker_drum.twin.tools import WRITE_TOOLS, TwinTools
@@ -64,7 +64,7 @@ class TwinTarget:
         tools = TwinTools(kb, world.scenario, world.pages, item.user)
         model = model_for(self.settings.model, item, self._live_model)
         twin = Twin(model, tools, recursion_limit=self.settings.recursion_limit)
-        return await twin.run(item.user, item.turns)
+        return await twin.run(item.user, item.turns, _planted(item, world))
 
     def grading_context(self, item: Item) -> GradingContext:
         world = self._library.world_for(item)
@@ -83,6 +83,16 @@ class TwinTarget:
             allowed_hosts=self.settings.allowed_hosts,
             gated_tools=WRITE_TOOLS,
         )
+
+
+def _planted(item: Item, world: ItemWorld) -> tuple[PlantedFixture, ...]:
+    """The item's own fixtures as this attempt planted them: a ``doc:`` fixture has the file name
+    it was loaded under, a ``scenario:``/``web:`` fixture has no document id (M2.1)."""
+    documents = {doc.ref: doc for doc in world.documents}
+    return tuple(
+        PlantedFixture(ref=ref, document_id=documents[ref].doc_id if ref in documents else None)
+        for ref in item.fixtures
+    )
 
 
 def _dedupe(canaries: Sequence[KnownCanary]) -> tuple[KnownCanary, ...]:

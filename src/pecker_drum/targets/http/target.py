@@ -37,6 +37,7 @@ from pecker_drum.observation import (
     ApprovalRecord,
     Observation,
     ObservedChannel,
+    PlantedFixture,
     Source,
     ToolCallRecord,
     ToolCallStatus,
@@ -104,6 +105,7 @@ class LeftoversError(RuntimeError):
 
 @dataclass(slots=True)
 class _Planted:
+    ref: str
     filename: str
     user: str
     id: str | None = None
@@ -124,6 +126,8 @@ class _Collector:
     """The observation of one attempt, built while the streams arrive."""
 
     observed: frozenset[ObservedChannel]
+    tag: str
+    """The run's tag on every planted document (``drum-fixture-<run id>``)."""
     turns: list[list[str]] = field(default_factory=list[list[str]])
     sources: list[Source] = field(default_factory=list[Source])
     seen_sources: set[tuple[str, str]] = field(default_factory=set[tuple[str, str]])
@@ -191,11 +195,21 @@ class _Collector:
             )
         )
 
-    def build(self, latency_s: float, redact: Redactor) -> Observation:
+    def build(
+        self, latency_s: float, redact: Redactor, planted: Sequence[_Planted] = ()
+    ) -> Observation:
         answers = ["".join(parts) for parts in self.turns]
         return Observation(
             answer=redact("\n\n".join(a for a in answers if a)),
             sources=tuple(Source(id=redact(s.id), text=redact(s.text)) for s in self.sources),
+            planted=tuple(
+                PlantedFixture(
+                    ref=redact(record.ref),
+                    document_id=redact(record.id) if record.id is not None else None,
+                    tag=redact(self.tag),
+                )
+                for record in planted
+            ),
             tool_calls=tuple(
                 ToolCallRecord(
                     id=redact(c.id),
@@ -374,7 +388,7 @@ class HttpTarget:
     async def run(self, item: Item, attempt: int) -> Observation:
         """One attempt. Never raises for target failures; Ctrl-C cleans up, then propagates."""
         started = self._clock()
-        collector = _Collector(self._observed)
+        collector = _Collector(self._observed, self.tag)
         user = item.user.sub
         values = {
             "run_id": self._run_id,
@@ -405,7 +419,7 @@ class HttpTarget:
             collector.fail(f"{type(exc).__name__}: {self._redact(str(exc))[:_MAX_ERROR]}")
         finally:
             await self._clean_up(user, values, planted, conversation)
-        return collector.build(self._clock() - started, self._redact)
+        return collector.build(self._clock() - started, self._redact, planted)
 
     def _fixtures_user(self, item: Item) -> str:
         """The login that plants, polls and deletes documents: ``[fixtures] user`` or the
@@ -532,15 +546,16 @@ class HttpTarget:
 
     async def _plant(self, item: Item, values: dict[str, str], planted: list[_Planted]) -> None:
         fixtures = self.config.fixtures
-        docs = [ref.partition(":")[2] for ref in item.fixtures if ref.startswith("doc:")]
-        if not docs:
+        refs = [ref for ref in item.fixtures if ref.startswith("doc:")]
+        if not refs:
             return
         if fixtures is None or self._library is None:
             msg = "this item plants documents, but the target config has no [fixtures]"
             raise TargetError(msg)
         upload = fixtures.upload
         owner = self._fixtures_user(item)
-        for name in docs:
+        for ref in refs:
+            name = ref.partition(":")[2]
             document = self._library.document(name)
             filename = f"{self.tag}-{name}"
             upload_values = values | {
@@ -551,7 +566,7 @@ class HttpTarget:
             for entry in upload.form:
                 form.setdefault(entry.name, []).append(render(entry.value, upload_values))
             content_type = "text/markdown" if name.endswith(".md") else "text/plain"
-            record = _Planted(filename, owner)
+            record = _Planted(ref, filename, owner)
             planted.append(record)  # before the request: cleanup finds it even if the reply is lost
             reply = await self._session.call(
                 f"upload {name}",

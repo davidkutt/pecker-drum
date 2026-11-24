@@ -9,7 +9,8 @@ import pytest
 from pecker_drum.campaign.graph import CampaignConfig, run_campaign
 from pecker_drum.grading.predicates import GradingContext, KnownCanary
 from pecker_drum.items.schema import Item
-from pecker_drum.observation import Observation
+from pecker_drum.observation import Observation, PlantedFixture, Source
+from pecker_drum.results import RetrievalSignal, RetrievalState
 
 CANARY = "CANARY-00000000ee01"
 
@@ -220,6 +221,89 @@ def test_run_id_without_a_judge_is_what_it_was_before(item_set: Path) -> None:
     with_judge = run_id_for(FakeTarget(), loaded, 2, "fake:reported")
     assert with_judge != before
     assert with_judge != run_id_for(FakeTarget(), loaded, 2, "fake:complied")
+
+
+# --- M2.1: the runner records the sources, the retrieval state and the signal (ADR 0010).
+
+
+class SourceTarget:
+    """A target that returns the sources and the planted fixtures it was built with."""
+
+    def __init__(
+        self,
+        sources: tuple[Source, ...] = (),
+        planted: tuple[PlantedFixture, ...] = (),
+    ) -> None:
+        self.sources = sources
+        self.planted = planted
+
+    @property
+    def name(self) -> str:
+        return "fake"
+
+    def describe(self) -> dict[str, str]:
+        return {"model": "fake:test"}
+
+    async def run(self, item: Item, attempt: int) -> Observation:
+        return Observation(answer="no leak", sources=self.sources, planted=self.planted)
+
+    def grading_context(self, item: Item) -> GradingContext:
+        return GradingContext(canaries=(KnownCanary(CANARY, "doc:x.md"),))
+
+
+PLANTED = PlantedFixture(ref="doc:x.md", document_id="x.md")
+
+
+async def test_an_attempt_records_the_retrieval_state_and_its_signal(
+    item_set: Path, tmp_path: Path
+) -> None:
+    from pecker_drum.campaign.record import read_record
+
+    target = SourceTarget(sources=(Source(id="s-1", text="[x.md] Runbook"),), planted=(PLANTED,))
+    result = await run_campaign(target, config(item_set, tmp_path, repeats=1))
+    states = [(r.retrieved, r.retrieval_signal) for r in result.report.results]
+    assert states == [(RetrievalState.RETRIEVED, RetrievalSignal.ID)] * 3
+    assert {r.source_ids for r in result.report.results} == {("s-1",)}
+    record = read_record(tmp_path / "reports", result.run_id)
+    assert [(r.retrieved, r.retrieval_signal) for r in record.results] == states
+
+
+async def test_source_ids_keep_the_target_order_dedupe_and_escape_controls(
+    item_set: Path, tmp_path: Path
+) -> None:
+    sources = (
+        Source(id="s-1", text="[x.md] Runbook"),
+        Source(id="s-bell\x07", text=""),
+        Source(id="s-1", text="again"),
+    )
+    target = SourceTarget(sources=sources)
+    result = await run_campaign(target, config(item_set, tmp_path, repeats=1))
+    for attempt in result.report.results:
+        assert attempt.source_ids == ("s-1", "s-bell\\u0007")
+        assert (attempt.retrieved, attempt.retrieval_signal) == (None, None)  # nothing planted
+
+
+async def test_a_target_that_raises_on_a_doc_item_is_unknown_not_null(tmp_path: Path) -> None:
+    """The item plants a `doc:` fixture, so the state is not `null` ("the item plants nothing").
+
+    The target raised and so reported no planted fixture; the runner falls back to the item's own
+    fixtures, and the error makes the attempt `unknown` with no signal.
+    """
+    item_set = tmp_path / "items" / "doc_v1.jsonl"
+    item_set.parent.mkdir()
+    item_set.write_text(
+        json.dumps(item_json("t-001") | {"fixtures": ["doc:x.md"]}) + "\n", encoding="utf-8"
+    )
+
+    class RaisingTarget(SourceTarget):
+        async def run(self, item: Item, attempt: int) -> Observation:
+            msg = "target exploded"
+            raise ValueError(msg)
+
+    result = await run_campaign(RaisingTarget(), config(item_set, tmp_path, repeats=1))
+    attempt = result.report.results[0]
+    assert attempt.error == "ValueError: target exploded"
+    assert (attempt.retrieved, attempt.retrieval_signal) == (RetrievalState.UNKNOWN, None)
 
 
 async def test_a_finished_run_leaves_a_run_record(item_set: Path, tmp_path: Path) -> None:
