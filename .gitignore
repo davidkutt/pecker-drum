@@ -4,6 +4,11 @@ private/
 !.env.example
 reports/
 
+# nest working files (AGENTS.md): the plan, model-comparison copies, the PR description
+/PLAN.md
+/PLAN.*.md
+/PR.md
+
 # Python / tooling
 __pycache__/
 *.py[cod]
