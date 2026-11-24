@@ -16,14 +16,15 @@ These rules apply to every coding agent in this repository (Cursor, Pi/nest and 
   the code, David decides.
 - Plan before you build: `/plan docs/milestones/<M>.md` writes `PLAN.md`. Besides its usual sections,
   a plan here maps every acceptance check to the step and test that prove it, names the docs to update
-  in the same PR (`docs/spec.md`, ADRs, `docs/dependencies.md`), and lists the commands only David may
-  run (live models, private targets). Wait for David's approval, then build one step at a time.
+  in the same PR (`docs/spec.md`, ADRs, `docs/dependencies.md`, and `README.md` when reports, files or
+  commands change), and lists the commands only David may run (live models, private targets). Wait for David's approval, then build one step at a time.
 - Never push to `main`. Every change, including docs, goes through a pull request from a new branch.
   You commit on that branch; David pushes it and opens the pull request. Never merge, approve, close
   or comment on pull requests.
 - Stop when the brief's acceptance checks pass. One pull request per milestone. Write its description
   to `PR.md`: what changed, the checks you ran with their results, the report tables, what you did not
-  test, what stays open. `PLAN.md` and `PR.md` are git-ignored and never committed.
+  test, what stays open. Refresh it after every later commit. `PLAN.md` and `PR.md` are git-ignored
+  and never committed.
 - If the brief and the spec disagree, or a decision isn't covered, stop and ask. Record real decisions
   as ADRs in `docs/adr/` (next free number).
 - No destructive git steps (force push, `reset --hard`, history rewrites) without David's explicit OK.
@@ -60,8 +61,8 @@ These rules apply to every coding agent in this repository (Cursor, Pi/nest and 
 ## Gates (Cursor and Pi/nest)
 
 David adds `.pi/protect.json` and `.pi/gate.json` from pecker-nest. An agent never edits `.pi/`,
-`.cursorignore` or `.cursor/`. When a gate blocks something, report the block and its reason and stop.
-Don't work around it.
+`.cursorignore` or `.cursor/`. When a gate blocks something, report the block and its reason in your
+next message, and stop only when the blocked action was needed for the task. Don't work around it.
 
 ## Stack
 
