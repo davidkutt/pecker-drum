@@ -1,6 +1,8 @@
 # ADR 0009: HTTP target adapter and the unobservable outcome
 
-Status: accepted (David, 23 November 2026)
+Status: accepted (David, 23 November 2026); amended after the PR #16 review (24 November
+2026): §2 `ca_file`, §5 reading streams and the deny order, §6 failed calls and denied calls
+reported as executed, §8 the fixtures user, §10 ID tokens, §11 where reports go.
 
 ## Context
 
