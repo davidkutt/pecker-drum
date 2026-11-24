@@ -18,7 +18,7 @@ stay exactly as they are: the matcher describes the attempt and never decides an
 
 1. **The target that planted reports it.** A planting target fills a defaulted
    `Observation.planted` with one `PlantedFixture(ref, document_id, tag)` per fixture it planted, so
-   the matcher never guesses from the item. The twin reports the item's own fixtures:
+   the matcher relies on what the target reports. The twin reports the item's own fixtures:
    `document_id` is the id the fixture was loaded under for a `doc:` fixture, and `scenario:` and
    `web:` fixtures have no document id and no tag. Base documents sit in the twin's world but were
    not planted by the attempt, so they are not listed. An HTTP target plants `doc:` fixtures only,
