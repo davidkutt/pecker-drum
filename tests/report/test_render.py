@@ -25,7 +25,14 @@ from pecker_drum.report.render import (
     write_report,
 )
 from pecker_drum.report.stats import Interval, upper_bound_zero
-from pecker_drum.results import AttemptResult, FiredPredicate, JudgeLabel, JudgeVerdict, RunInfo
+from pecker_drum.results import (
+    AttemptResult,
+    FiredPredicate,
+    JudgeLabel,
+    JudgeVerdict,
+    RetrievalState,
+    RunInfo,
+)
 
 COLLAPSED = re.compile(r"\[95 % CI (\d+\.\d) to \1 %")
 """An interval whose two ends render the same, for example ``[95 % CI 0.0 to 0.0 %]``."""
@@ -522,3 +529,108 @@ def test_an_http_target_label_names_the_report(tmp_path: Path) -> None:
     )
     md, _ = write_report(build_report(info, ITEMS, RESULTS), tmp_path, date(2026, 11, 23))
     assert md.name == "2026-11-23-stub-demo_v1-example-api.md"
+
+
+# --- Retrieved column (M2.1): per item, from the attempt-level states.
+
+RETRIEVAL_ITEMS = [item(f"t-{n:03d}", ["LLM01:2026"]) for n in range(1, 5)]
+LEGEND_SENTENCE = "Retrieved counts the attempts whose sources included a planted fixture"
+
+
+def retrieval_results() -> list[AttemptResult]:
+    """Two of three; two of three plus one unknown; all unknown; no state at all."""
+    states: list[RetrievalState | None] = [
+        RetrievalState.RETRIEVED,
+        RetrievalState.RETRIEVED,
+        RetrievalState.NOT_RETRIEVED,
+        RetrievalState.RETRIEVED,
+        RetrievalState.RETRIEVED,
+        RetrievalState.NOT_RETRIEVED,
+        RetrievalState.UNKNOWN,
+        RetrievalState.UNKNOWN,
+        RetrievalState.UNKNOWN,
+        None,  # plants nothing, or recorded before M2.1
+        None,
+    ]
+    owners = ["t-001"] * 3 + ["t-002"] * 4 + ["t-003"] * 2 + ["t-004"] * 2
+    counts: dict[str, int] = {}
+    results: list[AttemptResult] = []
+    for state, owner in zip(states, owners, strict=True):
+        counts[owner] = counts.get(owner, 0) + 1
+        results.append(
+            AttemptResult(
+                item_id=owner,
+                attempt=counts[owner],
+                outcome=Outcome.BLOCKED,
+                retrieved=state,
+            )
+        )
+    return results
+
+
+def test_retrieved_column_counts_the_known_states_per_item() -> None:
+    text = render_markdown(build_report(INFO, RETRIEVAL_ITEMS, retrieval_results()))
+    assert "| Item | Title | Vector | Severity | Retrieved | Successes |" in text
+    assert "| t-001 | title \\| t-001 | indirect_doc | high | 2/3 | 0 |" in text
+    assert "| t-002 | title \\| t-002 | indirect_doc | high | 2/3 (1 unknown) | 0 |" in text
+    # All attempts unknown, or no state at all: nothing to count.
+    assert "| t-003 | title \\| t-003 | indirect_doc | high | — | 0 |" in text
+    assert "| t-004 | title \\| t-004 | indirect_doc | high | — | 0 |" in text
+
+
+def test_the_retrieved_column_leaves_the_outcome_columns_alone() -> None:
+    text = render_markdown(build_report(INFO, RETRIEVAL_ITEMS, retrieval_results()))
+    assert "| t-001 | title \\| t-001 | indirect_doc | high | 2/3 | 0 | 0 | 3 | 0 |" in text
+    assert "**ASR@1:** 0/" in text
+
+
+def test_pre_m2_1_attempts_show_a_dash_inside_a_known_run() -> None:
+    items = [*ITEMS, item("t-003", ["LLM01:2026"])]
+    results = [
+        RESULTS[0].model_copy(update={"retrieved": RetrievalState.RETRIEVED}),
+        RESULTS[1],  # no state: recorded before M2.1, so not in the denominator
+        RESULTS[2],  # no state: the item planted nothing
+        AttemptResult(item_id="t-003", attempt=1, outcome=Outcome.BLOCKED),
+    ]
+    text = render_markdown(build_report(INFO, items, results))
+    assert "| t-001 | title \\| t-001 | indirect_doc | high | 1/1 |" in text
+    assert "| t-002 | title \\| t-002 | indirect_doc | high | — |" in text
+    assert "| t-003 | title \\| t-003 | indirect_doc | high | — |" in text
+
+
+def test_retrieved_column_is_absent_when_no_state_is_known() -> None:
+    # An item that plants nothing, or a whole record from before M2.1.
+    text = render_markdown(build_report(INFO, ITEMS, RESULTS))
+    assert "Retrieved" not in text
+    assert "retrieved" not in text
+    assert LEGEND_SENTENCE not in text
+    # An all-unknown run (a target without the sources channel) has no known state either.
+    unknown = [r.model_copy(update={"retrieved": RetrievalState.UNKNOWN}) for r in RESULTS]
+    assert "Retrieved" not in render_markdown(build_report(INFO, ITEMS, unknown))
+
+
+def test_the_legend_sentence_points_at_the_json_report_and_the_run_record() -> None:
+    with_column = render_markdown(build_report(INFO, RETRIEVAL_ITEMS, retrieval_results()))
+    without = render_markdown(build_report(INFO, ITEMS, RESULTS))
+    assert LEGEND_SENTENCE in with_column
+    assert "the JSON report and the run record" in with_column
+    assert LEGEND_SENTENCE not in without
+
+
+def test_json_keeps_the_retrieved_state_per_attempt_only() -> None:
+    data = json.loads(render_json(build_report(INFO, RETRIEVAL_ITEMS, retrieval_results())))
+    for block in data["items"]:
+        assert not {"retrieved", "retrieval_signal", "source_ids"} & block.keys()
+    assert [a["retrieved"] for a in data["attempts"]] == [
+        "retrieved",
+        "retrieved",
+        "not_retrieved",
+        "retrieved",
+        "retrieved",
+        "not_retrieved",
+        "unknown",
+        "unknown",
+        "unknown",
+        None,
+        None,
+    ]

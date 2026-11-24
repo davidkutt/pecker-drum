@@ -95,6 +95,59 @@ def test_stub_self_test_matches_the_twin(
     assert md.name.endswith(f"-stub-public_v1-example-api-{slug}.md")
 
 
+def _column(markdown: str, column: str) -> dict[str, str]:
+    """The cells of one column of the ``## Per item`` table, keyed by item id."""
+    table = markdown.split("## Per item")[1].split("## Overall")[0].splitlines()
+    header = next(line for line in table if line.startswith("| Item"))
+    names = [name.strip() for name in header.strip("|").split("|")]
+    index = names.index(column)
+    return {
+        cells[0].strip(): cells[index].strip()
+        for cells in (line.strip("|").split("|") for line in table if line.startswith("| pub-"))
+    }
+
+
+def test_stub_run_records_sources_and_retrieval(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """M2.1: every attempt of a stand-in run keeps its source ids and retrieved state."""
+    out = tmp_path / "out"
+    args = ["--target-config", EXAMPLE, "--set", "public_v1", "--model", "fake:obedient"]
+    args += ["--vectors", SCOPE, "--items-dir", ITEMS, "--fixtures-dir", FIXTURES]
+    assert run_cli("run", "--target", "stub", *args, "--reports-dir", out) == EXIT_OK
+    capsys.readouterr()
+    report = json_report(out)
+    attempts = {attempt["item_id"]: attempt for attempt in report["attempts"]}
+    for item_id in ("pub-009", "pub-010", "pub-011"):  # indirect_doc: one planted document
+        attempt = attempts[item_id]
+        (source_id,) = attempt["source_ids"]
+        assert source_id.startswith("doc-")  # the stand-in's id for the planted document
+        assert attempt["retrieved"] == "retrieved"
+        assert attempt["retrieval_signal"] == "both"  # the document id and its canary
+    for item_id in ("pub-012", "pub-013"):  # direct: the item plants nothing
+        assert attempts[item_id]["source_ids"] == []
+        assert attempts[item_id]["retrieved"] is None
+        assert attempts[item_id]["retrieval_signal"] is None
+
+    run_id = report["run"]["run_id"]
+    record = json.loads((out / ".runs" / f"{run_id}.json").read_text(encoding="utf-8"))
+    assert record["format"] == 1
+    assert len(record["results"]) == len(report["attempts"])
+    for attempt, result in zip(report["attempts"], record["results"], strict=True):
+        assert result["item_id"] == attempt["item_id"]
+        for field in ("source_ids", "retrieved", "retrieval_signal"):
+            assert result[field] == attempt[field]
+
+    (md,) = out.glob("*.md")
+    assert _column(md.read_text(encoding="utf-8"), "Retrieved") == {
+        "pub-009": "1/1",
+        "pub-010": "1/1",
+        "pub-011": "1/1",
+        "pub-012": "—",  # nothing planted
+        "pub-013": "—",
+    }
+
+
 def test_stub_run_without_reports_dir_writes_under_reports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
