@@ -178,7 +178,8 @@ class ToolResultEvents(_EventMap):
     rejected: tuple[Status, ...] = ()
     """Status values that mean an approval rejected the call (``denied``)."""
     refused: tuple[Status, ...] = ()
-    """Status values that mean the target's own permission check stopped the call."""
+    """Status values that mean the target's own permission check stopped the call. Any other
+    value is ``failed``, which counts for ``tool_proposed`` like ``rejected`` and ``refused``."""
 
     @model_validator(mode="after")
     def _statuses(self) -> Self:

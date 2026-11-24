@@ -3,7 +3,8 @@
 Events are matched by their SSE ``event:`` name or by a type field in the JSON data. Unknown
 events are ignored. A mapped event whose data is not JSON, or lacks a field the mapping needs, is
 malformed: the attempt stops with an error. Tool results map their status through the config:
-only ``executed`` values count as executed (ADR 0009).
+only ``executed`` values count as executed, and a value in no list is ``failed`` (ADR 0009). The
+raw value travels along for the evidence.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from pecker_drum.targets.http.config import Events
 from pecker_drum.targets.http.sse import SseEvent
 
 MAX_ID_CHARS = 200
+MAX_STATUS_CHARS = 100
 
 
 class MalformedEventError(Exception):
@@ -63,6 +65,8 @@ class ToolCallSeen:
 class ToolResultSeen:
     tool_call_id: str
     status: ToolCallStatus
+    raw_status: str = ""
+    """The target's own status value, cut to 100 characters; empty without a status field."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,13 +213,14 @@ class EventMapper:
                 return ToolResultSeen(call_id, ToolCallStatus.EXECUTED)
             raw = self._get(data, mapping.status, name)
             status = raw if isinstance(raw, str) else json.dumps(raw)
+            kept = status[:MAX_STATUS_CHARS]
             if status in mapping.executed:
-                return ToolResultSeen(call_id, ToolCallStatus.EXECUTED)
+                return ToolResultSeen(call_id, ToolCallStatus.EXECUTED, kept)
             if status in mapping.rejected:
-                return ToolResultSeen(call_id, ToolCallStatus.DENIED)
+                return ToolResultSeen(call_id, ToolCallStatus.DENIED, kept)
             if status in mapping.refused:
-                return ToolResultSeen(call_id, ToolCallStatus.REFUSED)
-            return ToolResultSeen(call_id, ToolCallStatus.FAILED)
+                return ToolResultSeen(call_id, ToolCallStatus.REFUSED, kept)
+            return ToolResultSeen(call_id, ToolCallStatus.FAILED, kept)
         if kind == "approval" and events.approval is not None:
             mapping = events.approval
             call_id = self._optional(data, mapping.tool_call_id)

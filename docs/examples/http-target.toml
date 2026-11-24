@@ -95,7 +95,8 @@ status = "status"
 executed = ["ok"]                      # only these count for tool_executed
 rejected = ["rejected"]                # an approval denied the call
 refused = ["forbidden"]                # the target's own permission check stopped it
-# any other status (for example "error") counts as a failed call: neither executed nor stopped
+# any other status (for example "error" or "timeout") is a failed call: the model made it, so it
+# counts for tool_proposed (contained), and the evidence keeps the target's raw status
 
 [events.approval]
 names = ["approval_required"]

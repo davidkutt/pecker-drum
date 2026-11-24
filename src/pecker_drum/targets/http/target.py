@@ -115,6 +115,7 @@ class _Call:
     name: str
     arguments: dict[str, JsonValue]
     status: ToolCallStatus = ToolCallStatus.PROPOSED
+    target_status: str = ""
     denied_by_harness: bool = False
 
 
@@ -146,11 +147,12 @@ class _Collector:
                 key = call_id or f"call-{len(self.calls) + 1}"
                 if key not in self.calls:  # a denied call replayed by the continuation stream
                     self.calls[key] = _Call(key, name, arguments)
-            case ToolResultSeen(tool_call_id=call_id, status=status):
+            case ToolResultSeen(tool_call_id=call_id, status=status, raw_status=raw):
                 call = self.calls.get(call_id)
                 if call is None:
-                    pass
-                elif not call.denied_by_harness:
+                    return
+                call.target_status = raw
+                if not call.denied_by_harness:
                     call.status = status
                 elif status is ToolCallStatus.EXECUTED and call.status is not status:
                     # Grade the worst case: a control that said no and ran the call anyway.
@@ -195,6 +197,7 @@ class _Collector:
                     name=redact(c.name),
                     arguments={redact(k): redact.json(v) for k, v in c.arguments.items()},
                     status=c.status,
+                    target_status=redact(c.target_status),
                 )
                 for c in self.calls.values()
             ),

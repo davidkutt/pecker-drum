@@ -76,6 +76,9 @@ class StubOptions:
     target that runs a denied call anyway."""
     refused_tools: frozenset[str] = frozenset()
     """Tools the stub's own permission check refuses (tool result status ``forbidden``)."""
+    failing_tools: frozenset[str] = frozenset()
+    """Tools that fail without an approval step (tool result status ``timeout``, a status in
+    none of the config's lists)."""
     uploaders: frozenset[str] | None = None
     """Users who may upload documents (others get 403); ``None``: everyone. A document can
     always be deleted only by its owner."""
@@ -110,7 +113,7 @@ class _Turn:
     username: str
     conversation: str
     steps: list[tuple[str, str, dict[str, Any]]]
-    """``(kind, tool or answer, arguments)``; kind is read, gated, refused or answer."""
+    """``(kind, tool or answer, arguments)``; kind is read, gated, refused, failing or answer."""
     position: int = 0
     calls: int = 0
 
@@ -255,6 +258,8 @@ class StubServer:
                 continue
             if call.name in self.options.refused_tools:
                 kind = "refused"
+            elif call.name in self.options.failing_tools:
+                kind = "failing"
             elif call.name in GATED_TOOLS:
                 kind = "gated"
             else:
@@ -304,8 +309,9 @@ class StubServer:
                 )
                 events.append(("done", {}))  # the decision response continues the turn
                 return events, {approval: _Pending(turn, call_id, name, call_args)}
-            if kind == "refused":
-                events.append(("tool_result", {"tool_call_id": call_id, "status": "forbidden"}))
+            if kind in ("refused", "failing"):
+                status = "forbidden" if kind == "refused" else "timeout"
+                events.append(("tool_result", {"tool_call_id": call_id, "status": status}))
                 continue
             events.append(
                 ("tool_result", {"tool_call_id": call_id, "status": "ok", "output": "done"})

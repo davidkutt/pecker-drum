@@ -64,7 +64,13 @@ def test_mapped_events(mapper: EventMapper) -> None:
 )
 def test_tool_result_statuses(mapper: EventMapper, status: Any, expected: ToolCallStatus) -> None:
     result = mapper.map(event("tool_result", {"tool_call_id": "c1", "status": status}))
-    assert result == ToolResultSeen("c1", expected)
+    raw = status if isinstance(status, str) else json.dumps(status)
+    assert result == ToolResultSeen("c1", expected, raw)  # the target's own value travels along
+
+
+def test_a_long_status_is_cut(mapper: EventMapper) -> None:
+    result = mapper.map(event("tool_result", {"tool_call_id": "c1", "status": "x" * 500}))
+    assert result == ToolResultSeen("c1", ToolCallStatus.FAILED, "x" * 100)
 
 
 def test_unknown_events_are_ignored_without_parsing(mapper: EventMapper) -> None:

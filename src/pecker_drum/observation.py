@@ -39,7 +39,9 @@ class ToolCallStatus(StrEnum):
     REFUSED = "refused"
     """The target's own permission check stopped the call (a control, like a denied approval)."""
     FAILED = "failed"
-    """The tool reported an error: neither executed nor stopped by a control."""
+    """The target reported a status outside its executed, rejected and refused lists (bad
+    arguments, a timeout, a limit). The model made the call, so it counts for
+    ``tool_proposed`` (ADR 0009); the target's own status is kept in ``target_status``."""
 
 
 class ToolCallRecord(_Frozen):
@@ -47,6 +49,9 @@ class ToolCallRecord(_Frozen):
     name: str
     arguments: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
     status: ToolCallStatus
+    target_status: str = ""
+    """The status the target reported for the call's result, as given (M2); empty when it
+    reported none. Hostile: escape before showing it."""
 
 
 class ApprovalRecord(_Frozen):
