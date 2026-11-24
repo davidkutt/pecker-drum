@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
@@ -10,9 +11,29 @@ from pecker_drum.grading.outcome import Grade, Outcome
 from pecker_drum.observation import Observation, Usage
 from pecker_drum.report.excerpt import escape_answer, escape_excerpt
 
+if TYPE_CHECKING:  # the matcher imports the two enums above: no runtime cycle
+    from pecker_drum.grading.retrieval import Retrieval
+
 
 class _Frozen(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class RetrievalState(StrEnum):
+    """Whether a planted fixture was among the sources the target returned (M2.1)."""
+
+    RETRIEVED = "retrieved"
+    NOT_RETRIEVED = "not_retrieved"
+    UNKNOWN = "unknown"
+    """The target exposes no sources channel, or a planted fixture had no usable signal."""
+
+
+class RetrievalSignal(StrEnum):
+    """The marker that matched, when one did (M2.1): never set unless ``retrieved``."""
+
+    ID = "id"
+    CANARY = "canary"
+    BOTH = "both"
 
 
 class JudgeLabel(StrEnum):
@@ -42,6 +63,12 @@ class FiredPredicate(_Frozen):
     """Escaped excerpt, at most 120 characters."""
 
 
+def _source_ids(observation: Observation) -> tuple[str, ...]:
+    """The ids the target returned, in its order, deduplicated, then escaped and cut."""
+    raw = dict.fromkeys(source.id for source in observation.sources)
+    return tuple(escape_excerpt(source_id) for source_id in raw)
+
+
 class AttemptResult(_Frozen):
     item_id: str
     attempt: int
@@ -51,6 +78,15 @@ class AttemptResult(_Frozen):
     """Escaped excerpt of the answer, at most 120 characters."""
     answer: str | None = None
     """The full answer, escaped but uncut (M1.5). ``None``: recorded before M1.5."""
+    source_ids: tuple[str, ...] = ()
+    """Ids of the sources the target returned, in its order, without duplicates, escaped and cut
+    to 120 characters (M2.1). Source texts stay out: they can be long and private."""
+    retrieved: RetrievalState | None = None
+    """Whether a planted fixture was among the sources (M2.1). ``None``: the item planted
+    nothing, or the attempt was recorded before M2.1."""
+    retrieval_signal: RetrievalSignal | None = None
+    """The signal that matched: ``id``, ``canary`` or ``both`` (M2.1). ``None`` unless
+    ``retrieved``."""
     tool_calls: tuple[str, ...] = ()
     """``name:status`` for every tool call, in order."""
     error: str | None = None
@@ -66,8 +102,15 @@ class AttemptResult(_Frozen):
 
     @classmethod
     def from_grade(
-        cls, item_id: str, attempt: int, observation: Observation, grade: Grade
+        cls,
+        item_id: str,
+        attempt: int,
+        observation: Observation,
+        grade: Grade,
+        retrieval: Retrieval | None = None,
     ) -> AttemptResult:
+        """``retrieval``: what the sources say about the planted fixtures (M2.1, ADR 0010);
+        ``None`` leaves the three fields unset (an item that plants nothing)."""
         return cls(
             item_id=item_id,
             attempt=attempt,
@@ -82,6 +125,9 @@ class AttemptResult(_Frozen):
             ),
             answer_excerpt=escape_excerpt(observation.answer),
             answer=escape_answer(observation.answer),
+            source_ids=_source_ids(observation),
+            retrieved=retrieval.state if retrieval is not None else None,
+            retrieval_signal=retrieval.signal if retrieval is not None else None,
             tool_calls=tuple(f"{c.name}:{c.status.value}" for c in observation.tool_calls),
             error=escape_excerpt(observation.error) if observation.error else None,
             usage=observation.usage,
