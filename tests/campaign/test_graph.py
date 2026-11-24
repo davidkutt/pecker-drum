@@ -283,6 +283,29 @@ async def test_source_ids_keep_the_target_order_dedupe_and_escape_controls(
         assert (attempt.retrieved, attempt.retrieval_signal) == (None, None)  # nothing planted
 
 
+async def test_a_target_that_raises_on_a_doc_item_is_unknown_not_null(tmp_path: Path) -> None:
+    """The item plants a `doc:` fixture, so the state is not `null` ("the item plants nothing").
+
+    The target raised and so reported no planted fixture; the runner falls back to the item's own
+    fixtures, and the error makes the attempt `unknown` with no signal.
+    """
+    item_set = tmp_path / "items" / "doc_v1.jsonl"
+    item_set.parent.mkdir()
+    item_set.write_text(
+        json.dumps(item_json("t-001") | {"fixtures": ["doc:x.md"]}) + "\n", encoding="utf-8"
+    )
+
+    class RaisingTarget(SourceTarget):
+        async def run(self, item: Item, attempt: int) -> Observation:
+            msg = "target exploded"
+            raise ValueError(msg)
+
+    result = await run_campaign(RaisingTarget(), config(item_set, tmp_path, repeats=1))
+    attempt = result.report.results[0]
+    assert attempt.error == "ValueError: target exploded"
+    assert (attempt.retrieved, attempt.retrieval_signal) == (RetrievalState.UNKNOWN, None)
+
+
 async def test_a_finished_run_leaves_a_run_record(item_set: Path, tmp_path: Path) -> None:
     from pecker_drum.campaign.record import read_record
 

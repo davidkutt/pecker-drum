@@ -33,7 +33,7 @@ from pecker_drum.grading.retrieval import retrieval as match_retrieval
 from pecker_drum.items.loader import ItemSet, load_item_set
 from pecker_drum.items.schema import Item
 from pecker_drum.judge import Judge, judge_result
-from pecker_drum.observation import Observation
+from pecker_drum.observation import Observation, PlantedFixture
 from pecker_drum.report.render import Report, SelfTestRow, build_report, write_report
 from pecker_drum.results import AttemptResult, RunInfo, SkippedItem
 from pecker_drum.targets.base import Target
@@ -170,12 +170,15 @@ async def _attempt(
     except Exception as exc:  # a target must not raise, but never lose the run over it
         observation = Observation(error=f"{type(exc).__name__}: {str(exc)[:300]}")
     context = target.grading_context(item)
+    # A target that raised reported nothing it planted, but the item's fixtures still went in (or
+    # would have): fall back to them by ref, so `null` keeps meaning "the item plants nothing".
+    planted = observation.planted or tuple(PlantedFixture(ref=ref) for ref in item.fixtures)
     result = AttemptResult.from_grade(
         item.id,
         attempt,
         observation,
         grade(item, observation, context),
-        match_retrieval(observation, observation.planted, context.canaries),
+        match_retrieval(observation, planted, context.canaries),
     )
     if judge is not None:  # after grading: the label can never feed back into the outcome
         result = await judge_result(judge, item, result)

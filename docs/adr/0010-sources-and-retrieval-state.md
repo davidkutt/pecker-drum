@@ -24,7 +24,10 @@ stay exactly as they are: the matcher describes the attempt and never decides an
    not planted by the attempt, so they are not listed. An HTTP target plants `doc:` fixtures only,
    with the target's own id for the document and the run tag `drum-fixture-<run id>`. Markers pass
    the redactor like every other string in an HTTP observation (ADR 0009), so matching runs over the
-   same ids the reports keep.
+   same ids the reports keep. A target that reported nothing it planted (it raised before it could
+   plant, or before it could report) falls back to the item's own fixtures, one `PlantedFixture(ref)`
+   per ref: those carry no id and no tag, so only their canaries can match, and the errored attempt
+   is `unknown` rather than `null`. `null` keeps its meaning: the item plants nothing.
 2. **Two signals, either one counts.**
    - `id` is the fixture's identity. A planted document id counts when it appears between brackets
      in a source text (the twin's tools print `[<doc_id>] <title>`), when it is the whole source id,
