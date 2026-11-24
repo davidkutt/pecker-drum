@@ -8,13 +8,22 @@ These rules apply to every coding agent in this repository (Cursor, Pi/nest and 
 
 ## How this repo is run
 
-- David (owner, senior full-stack dev, security reviewer) supervises you. A separate planning chat
-  writes the milestone briefs and reviews your pull requests.
-- Work one milestone at a time. Start with a plan, show it, wait for approval, then build.
+- David (owner, senior full-stack dev, security reviewer) supervises you. Milestones are planned and
+  built with nest (pecker-nest); Cursor and other agents follow the same rules.
+- Work one milestone at a time. Its brief, `docs/milestones/<M>.md`, holds the goal, deliverables,
+  acceptance checks and what is out of scope. Briefs are David's: agents read them and never edit them.
+- Settle the decisions a brief leaves open before planning (`/skill:grill-me`): you find the facts in
+  the code, David decides.
+- Plan before you build: `/plan docs/milestones/<M>.md` writes `PLAN.md`. Besides its usual sections,
+  a plan here maps every acceptance check to the step and test that prove it, names the docs to update
+  in the same PR (`docs/spec.md`, ADRs, `docs/dependencies.md`), and lists the commands only David may
+  run (live models, private targets). Wait for David's approval, then build one step at a time.
 - Never push to `main`. Every change, including docs, goes through a pull request from a new branch.
-  Never merge, approve, close or comment on pull requests.
-- Stop when the brief's acceptance checks pass. One pull request per milestone, with the report
-  tables in its description.
+  You commit on that branch; David pushes it and opens the pull request. Never merge, approve, close
+  or comment on pull requests.
+- Stop when the brief's acceptance checks pass. One pull request per milestone. Write its description
+  to `PR.md`: what changed, the checks you ran with their results, the report tables, what you did not
+  test, what stays open. `PLAN.md` and `PR.md` are git-ignored and never committed.
 - If the brief and the spec disagree, or a decision isn't covered, stop and ask. Record real decisions
   as ADRs in `docs/adr/` (next free number).
 - No destructive git steps (force push, `reset --hard`, history rewrites) without David's explicit OK.
@@ -24,8 +33,8 @@ These rules apply to every coding agent in this repository (Cursor, Pi/nest and 
   process substitution or `[[ ]]`). A command that is identical in both shells is shown once and says so.
 - **Secrets:** never commit, print or paste a key, token or `.env` value (also not in logs, reports,
   PR descriptions or chat). Read keys into the shell with `read -s VAR` (bash) or `read -s -x VAR` (fish).
-- **Session handoff:** end every session with branch and PR link, what changed, the checks you ran
-  with their results, what is left open, and decisions that need David.
+- **Session handoff:** end every session with the branch (and the PR link once it exists), what
+  changed, the checks you ran with their results, what is left open, and decisions that need David.
 
 ## This repo contains prompt injections on purpose
 
