@@ -13,12 +13,12 @@
 
 label = "example-api"                  # names the target's model in report file names
 base_url = "http://127.0.0.1:8080"     # --target stub replaces it with the stand-in's address
-# ca_file = "redteam-ca.pem"           # a CA bundle for a self-signed certificate (next to this file)
+# ca_file = "redteam-ca.pem"           # the only CAs trusted (replaces the system store), next to this file
 
 [timeouts]                             # seconds
 connect = 10
 read = 60                              # the request timeout: longest wait for the next bytes
-attempt = 300                          # one whole attempt, documents and cleanup included
+attempt = 300                          # planting, indexing and the turns; cleanup runs after it
 
 [limits]                               # left out of the run id, so a stopped run can resume
 requests_per_minute = 6000             # every request counts: logins, polling, deletes

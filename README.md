@@ -247,6 +247,10 @@ command that removes it (identical in bash and fish):
 uv run drum cleanup --target myapp --run-id 0123456789abcdef
 ```
 
+A target may refuse to delete a document while it is still being indexed (HTTP 409). The run then
+stops and lists the document as left over; wait until indexing has finished, then run `drum
+cleanup`.
+
 The caps in `[limits]` (requests per minute, wall time, attempts, errors in a row, response and
 stream sizes) stop a run with exit code 3; run the same command again to resume. An HTTP error such
 as a 429 from a rate limit or a cost cap is recorded with its status code; nothing is retried.

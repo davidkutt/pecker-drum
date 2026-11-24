@@ -25,7 +25,8 @@ which stream shapes to support, transport rules, secrets, and leftovers.
    - `https` is required unless the host is loopback: the literal `localhost`, `127.0.0.0/8` or
      `::1`. The token URL has to use the issuer's host, and a private issuer may sit on
      `localhost`. There is no switch for plain http elsewhere.
-   - TLS is always verified; `ca_file` adds a CA bundle for a self-signed certificate.
+   - TLS is always verified. `ca_file` names a CA bundle for a self-signed certificate; it
+     replaces the system trust store, so only the CAs in that bundle are trusted.
    - Requests go only to the origin of `base_url` and of the token URL. Redirects are not followed
      (a 3xx is an error), and proxy variables and `.netrc` are ignored (`trust_env=False`).
 3. **Templates.** Plain `{name}` substitution with a fixed set of names per request, and `{{` and
@@ -131,9 +132,10 @@ which stream shapes to support, transport rules, secrets, and leftovers.
      is an error.
    - An error from an HTTP response records the status code (429 from a rate limit or a cost cap
      shows as such) and a redacted excerpt of the body. There are no automatic retries.
-10. **Secrets.** A redactor knows every password, the client secret and every access and refresh
-    token, and every string in an HTTP observation passes through it: answer, sources, tool
-    arguments, approvals, errors. The run id uses a digest of the config: variable names count,
+10. **Secrets.** A redactor knows every password, the client secret and every access, refresh
+    and ID token (the token response of a password grant with scope `openid` carries one), and
+    every string in an HTTP observation passes through it: answer, sources, tool arguments, tool
+    statuses, approvals, errors. The run id uses a digest of the config: variable names count,
     values never do, and `[limits]` is left out so a run stopped by a cap can resume with a
     larger one. The stand-in's passwords are random for each run and held in memory. A test
     with a stand-in that echoes the password and the tokens checks that no 8-character piece of
@@ -171,7 +173,8 @@ which stream shapes to support, transport rules, secrets, and leftovers.
     disconnected; if it cancels the turn on a disconnect, a deny that follows fails.
   - Each tool call must arrive as one complete event.
   - Tool results without a status field count as executed.
-  - Sources come only from source events, not from tool-result text.
+  - Sources come only from source events, not from tool-result text. A target may resend its
+    whole source list with each sources event; each source (same id and text) is kept once.
   - Leftover conversations are not swept by tag; a conversation title can carry `{tag}` so they
     can be found by hand.
 - A tool result that reports a call as executed after the harness denied it makes the attempt

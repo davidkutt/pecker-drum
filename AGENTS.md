@@ -119,3 +119,5 @@ docs/         spec.md, adr/, milestones/, dependencies.md
 | `uv run ruff check . && uv run ruff format --check . && uv run pyright` | Lint, format check, types |
 | `uv run drum run --target twin --set public_v1 --model fake:obedient` | Harness self-test |
 | `uv run drum run --target twin --set public_v1 --model openrouter:<id> --repeats 5` | Live run (needs `OPENROUTER_API_KEY`) |
+| `uv run drum run --target stub --set public_v1 --model fake:obedient --vectors direct,indirect_doc` | Stand-in self-test over HTTP (also `--model fake:safe`; reaches only `127.0.0.1`, writes to `reports/`) |
+| `uv run drum cleanup --target <name> --run-id <id>` | Delete documents a run left on a private HTTP target (David only, private targets) |

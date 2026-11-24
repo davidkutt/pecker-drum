@@ -363,6 +363,7 @@ class Timeouts(_Strict):
     read: float = Field(default=60.0, gt=0, le=3600)
     """The request timeout: the longest wait for the next bytes of a response or stream."""
     attempt: float = Field(default=600.0, gt=0, le=86400)
+    """One attempt: planting, indexing and the turns. Cleanup runs after it, outside the limit."""
 
 
 class Limits(_Strict):
@@ -399,8 +400,8 @@ class HttpTargetConfig(_Strict):
     """Names the target's model in report file names."""
     base_url: str = Field(min_length=1, max_length=500)
     ca_file: str | None = None
-    """A CA bundle for a self-signed certificate, relative to the config file. TLS verification
-    cannot be switched off."""
+    """A CA bundle for a self-signed certificate, relative to the config file. It replaces the
+    system trust store: only its CAs are trusted. TLS verification cannot be switched off."""
     timeouts: Timeouts = Timeouts()
     limits: Limits = Limits()
     auth: OidcPasswordAuth

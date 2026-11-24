@@ -242,7 +242,7 @@ stand-in. A strict schema rejects unknown keys at every level.
   maximum events per stream. HTTP errors record the status code and a redacted excerpt; no
   retries.
 - **Redaction:** every string in an HTTP observation passes a redactor that knows every password,
-  client secret and token of the run.
+  client secret and token of the run (access, refresh and ID tokens).
 - **Stand-in:** `--target stub` starts a server on `127.0.0.1` with a random port and fresh
   passwords held in memory; `--model fake:obedient | fake:safe` picks its mode, which replays an
   item's `self_test` like the fake models. The network stays blocked except `127.0.0.1` unless
