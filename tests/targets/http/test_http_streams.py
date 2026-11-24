@@ -141,6 +141,24 @@ async def test_approvals_are_denied_in_order_after_the_stream_closed(
     assert result.outcome is Outcome.CONTAINED
 
 
+async def test_each_source_is_kept_once(example_config: HttpTargetConfig) -> None:
+    """A target may resend its whole source list with each sources event."""
+    first = {"documents": [{"id": "d1", "text": "runbook"}]}
+    both = {"documents": [{"id": "d1", "text": "runbook"}, {"id": "d2", "text": "faq"}]}
+    changed = {"documents": [{"id": "d1", "text": "runbook, edited"}]}
+    reply = Body(sse(("sources", first), ("sources", both), ("sources", changed), ("done", {})))
+    fake = FakeTarget({"/api/conversations/c1/messages": reply})
+    target = target_for(example_config, fake)
+    async with target:
+        target.use_run(RUN)
+        observation = await target.run(ITEM, 1)
+    assert [(s.id, s.text) for s in observation.sources] == [
+        ("d1", "runbook"),
+        ("d2", "faq"),
+        ("d1", "runbook, edited"),  # same id, other text: kept
+    ]
+
+
 async def test_a_stream_kept_open_after_done_ends_without_an_error(
     example_config: HttpTargetConfig,
 ) -> None:

@@ -2,8 +2,9 @@
 
 Each ``item.user.sub`` maps to a user name and the name of a ``DRUM_...`` variable holding the
 password. A token is refreshed ``refresh_margin`` seconds before it expires (at most half its
-lifetime): with the refresh token while it is valid, else with the password. Every token and
-password goes to the redactor, and a login error never shows the response body.
+lifetime): with the refresh token while it is valid, else with the password. Every token (access,
+refresh and the ID token of an ``openid`` scope) and every password goes to the redactor, and a
+login error never shows the response body.
 """
 
 from __future__ import annotations
@@ -144,6 +145,8 @@ class TokenManager:
         new_refresh = reply.get("refresh_token")
         new_refresh = new_refresh if isinstance(new_refresh, str) and new_refresh else None
         self._redact.add(new_refresh)
+        id_token = reply.get("id_token")  # sent for scope "openid"; never used, always redacted
+        self._redact.add(id_token if isinstance(id_token, str) else None)
         lifetime = _number(reply.get("expires_in"), DEFAULT_LIFETIME_S) or DEFAULT_LIFETIME_S
         refresh_lifetime = _number(reply.get("refresh_expires_in"), None)
         return _Token(

@@ -126,6 +126,7 @@ class _Collector:
     observed: frozenset[ObservedChannel]
     turns: list[list[str]] = field(default_factory=list[list[str]])
     sources: list[Source] = field(default_factory=list[Source])
+    seen_sources: set[tuple[str, str]] = field(default_factory=set[tuple[str, str]])
     calls: dict[str, _Call] = field(default_factory=dict[str, _Call])
     approvals: list[ApprovalRecord] = field(default_factory=list[ApprovalRecord])
     contradictions: list[str] = field(default_factory=list[str])
@@ -142,7 +143,11 @@ class _Collector:
                     self.turns.append([])
                 self.turns[-1].append(text)
             case SourcesFound(sources=sources):
-                self.sources.extend(sources)
+                # A target may resend its whole source list with each sources event.
+                for source in sources:
+                    if (source.id, source.text) not in self.seen_sources:
+                        self.seen_sources.add((source.id, source.text))
+                        self.sources.append(source)
             case ToolCallSeen(id=call_id, name=name, arguments=arguments):
                 key = call_id or f"call-{len(self.calls) + 1}"
                 if key not in self.calls:  # a denied call replayed by the continuation stream

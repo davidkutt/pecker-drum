@@ -29,6 +29,7 @@ class FakeIdp:
         return {
             "access_token": f"access-{self.counter}-abcdef",
             "refresh_token": f"refresh-{self.counter}-abcdef",
+            "id_token": f"id-{self.counter}-abcdef",  # an openid scope brings an ID token
             "expires_in": self.lifetime,
         }
 
@@ -66,7 +67,15 @@ async def test_token_is_refreshed_before_it_expires(example_config: HttpTargetCo
         "grant_type": "refresh_token",
         "refresh_token": "refresh-1-abcdef",
     }
-    for secret in ("pw-carol-1234", first, second, "refresh-1-abcdef"):
+    assert idp.forms[0]["scope"] == "openid"
+    for secret in (
+        "pw-carol-1234",
+        first,
+        second,
+        "refresh-1-abcdef",
+        "id-1-abcdef",
+        "id-2-abcdef",
+    ):
         assert redactor(f"x {secret} y") == "x [redacted] y"
 
 

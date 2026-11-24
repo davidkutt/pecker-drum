@@ -88,7 +88,8 @@ class StubOptions:
     """Write streams in pieces of this many bytes (splits lines and UTF-8 characters)."""
     crlf: bool = False
     leaky: bool = False
-    """Echo the bearer token and the user's password in answers, sources and error bodies."""
+    """Echo the bearer token, the ID token and the user's password in answers, sources and
+    error bodies."""
     stall: float = 0.0
     """Seconds to wait inside a message stream before the answer."""
     close_delay: float = 0.02
@@ -132,7 +133,9 @@ class StubState:
     access: dict[str, tuple[str, float]] = field(default_factory=dict[str, tuple[str, float]])
     refresh: dict[str, tuple[str, float]] = field(default_factory=dict[str, tuple[str, float]])
     issued: list[str] = field(default_factory=list[str])
-    """Every access and refresh token handed out (leak tests)."""
+    """Every access, refresh and ID token handed out (leak tests)."""
+    id_tokens: dict[str, str] = field(default_factory=dict[str, str])
+    """The latest ID token per user (a password grant with scope ``openid``)."""
     grants: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
     """``(grant type, user)`` per token request."""
     documents: dict[str, _Document] = field(default_factory=dict[str, _Document])
@@ -224,20 +227,26 @@ class StubServer:
 
     # -- state, called by the handler under the lock -------------------------------------------
 
-    def issue(self, username: str, grant: str) -> dict[str, Any]:
+    def issue(self, username: str, grant: str, scope: str = "") -> dict[str, Any]:
         access, refresh = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
         now = time.monotonic()
         self.state.access[access] = (username, now + self.options.token_lifetime)
         self.state.refresh[refresh] = (username, now + self.options.refresh_lifetime)
         self.state.issued += [access, refresh]
         self.state.grants.append((grant, username))
-        return {
+        reply: dict[str, Any] = {
             "access_token": access,
             "token_type": "Bearer",
             "expires_in": self.options.token_lifetime,
             "refresh_token": refresh,
             "refresh_expires_in": self.options.refresh_lifetime,
         }
+        if "openid" in scope.split():
+            id_token = "id." + secrets.token_urlsafe(24)
+            self.state.id_tokens[username] = id_token
+            self.state.issued.append(id_token)
+            reply["id_token"] = id_token
+        return reply
 
     def user_for(self, header: str | None) -> tuple[str, str] | None:
         if not header or not header.startswith("Bearer "):
@@ -283,7 +292,8 @@ class StubServer:
                 text = name
                 if self.options.leaky:
                     password = self.state.users.get(turn.username, "")
-                    text += f" (debug: token {token}, password {password})"
+                    id_token = self.state.id_tokens.get(turn.username, "")
+                    text += f" (debug: token {token}, id {id_token}, password {password})"
                 words = text.split(" ")
                 events += [
                     ("token", {"delta": word + (" " if i < len(words) - 1 else "")})
@@ -544,7 +554,7 @@ class _Handler(BaseHTTPRequestHandler):
                 if username in stub.state.users and stub.state.users[username] == form.get(
                     "password"
                 ):
-                    reply = (HTTPStatus.OK, stub.issue(username, "password"))
+                    reply = (HTTPStatus.OK, stub.issue(username, "password", form.get("scope", "")))
                 else:
                     reply = (HTTPStatus.UNAUTHORIZED, {"error": "invalid_grant"})
             elif form.get("grant_type") == "refresh_token":

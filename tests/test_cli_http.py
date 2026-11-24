@@ -152,6 +152,8 @@ def test_private_target_run_without_reports_dir_writes_under_private_reports(
         (["--target", "lab", "--model", "fake:safe"], "use --model target"),
         (["--target", "lab", "--model", "openrouter"], "use --model target"),
         (["--target", "missing", "--model", "target"], "unknown target 'missing'"),
+        (["--target", "../x", "--model", "target"], "unknown target '../x'"),
+        (["--target", "a/b", "--model", "target"], "unknown target 'a/b'"),
     ],
 )
 def test_http_target_usage_errors(
@@ -353,6 +355,20 @@ def test_ctrl_c_cleans_up_planted_documents(
     assert server.state.deleted  # the attempt's finally and the run's sweep removed it
     assert server.state.documents == {}
     assert server.state.conversations == {}
+
+
+def test_ctrl_c_with_leftovers_says_so_after_the_check(
+    lab: Callable[..., Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def interrupt() -> None:
+        os.kill(os.getpid(), signal.SIGINT)
+
+    config = lab(StubOptions(stall=3.0, on_stream=interrupt, ignore_deletes=True))
+    assert lab_run(config, tmp_path / "out", "--vectors", "indirect_doc") == EXIT_STOPPED
+    err = capsys.readouterr().err
+    assert "were cleaned up" not in err
+    leftover = err.index("planted documents of run")
+    assert leftover < err.index("interrupted: planted documents are still on the target")
 
 
 # --- secrets never leak --------------------------------------------------------------------------

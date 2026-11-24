@@ -575,14 +575,11 @@ def _run_http_target(
 
     result: CampaignResult | None = None
     code = EXIT_OK
+    interrupted = False
     try:
         result = asyncio.run(go())
     except KeyboardInterrupt:
-        print(
-            "\ninterrupted: planted documents were cleaned up; run the same command again to "
-            "resume from the checkpoint",
-            file=sys.stderr,
-        )
+        interrupted = True
         code = EXIT_INTERRUPTED
     except RunAborted as exc:
         print(
@@ -599,8 +596,22 @@ def _run_http_target(
     except TargetError as exc:
         print(f"drum: {exc}", file=sys.stderr)
         code = EXIT_STOPPED
-    if _check_leftovers(args, target):
+    leftovers = _check_leftovers(args, target)
+    if leftovers:
         code = EXIT_STOPPED
+    if interrupted:
+        # Only after the check: a leftover was printed above with the command that removes it.
+        if leftovers:
+            done = "planted documents are still on the target (see above)"
+        elif config.fixtures is not None:
+            done = "planted documents were cleaned up"
+        else:
+            done = "nothing was planted"
+        print(
+            f"\ninterrupted: {done}; run the same command again to resume from the checkpoint",
+            file=sys.stderr,
+        )
+        return code
     if result is None:
         return code
     _print_summary(result.report, result.report_paths, [*notes, *_resume_notes(result)])
