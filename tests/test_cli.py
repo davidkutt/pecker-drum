@@ -118,18 +118,23 @@ def test_wrong_self_test_fails_the_run(
 @pytest.mark.parametrize(
     ("extra", "message"),
     [
-        (["--target", "elsewhere", "--model", "fake:safe"], "unknown target"),
+        (["--target", "elsewhere", "--model", "fake:safe"], "unknown target 'elsewhere'"),
+        (["--target", "../escape", "--model", "fake:safe"], "unknown target '../escape'"),
+        (["--target", "a/b", "--model", "target"], "plain name"),
         (["--model", "fake:nope"], "unknown model"),
         (["--model", "fake:safe", "--repeats", "0"], "at least 1"),
+        (["--model", "fake:safe", "--vectors", "direct,nope"], "unknown vector 'nope'"),
     ],
 )
 def test_usage_errors(
     tmp_path: Path,
     mini_fixtures: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
     extra: list[str],
     message: str,
 ) -> None:
+    monkeypatch.chdir(tmp_path)  # a private target name resolves below the working directory
     items_dir = write_items(tmp_path, DOC_ITEM)
     assert run(tmp_path, mini_fixtures, items_dir, *extra) == EXIT_USAGE
     assert message in capsys.readouterr().err

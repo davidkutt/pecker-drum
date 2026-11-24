@@ -30,6 +30,10 @@ class RunRecordError(RuntimeError):
     """No usable record for a run id. The message says what to do next."""
 
 
+class RunRecordNotFoundError(RunRecordError):
+    """Neither a record nor a checkpoint for the run id in that reports directory."""
+
+
 class RunRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -74,6 +78,7 @@ def read_record(reports_dir: Path, run_id: str) -> RunRecord:
                 f"no finished run {run_id} in {reports_dir / RUNS_DIR}: runs that finished before "
                 "M1.5 keep no record, so run it again"
             )
+            raise RunRecordNotFoundError(msg)
         raise RunRecordError(msg)
     try:
         return RunRecord.model_validate_json(path.read_text(encoding="utf-8"))

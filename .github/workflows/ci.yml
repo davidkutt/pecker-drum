@@ -41,6 +41,15 @@ jobs:
         run: uv run drum run --target twin --set public_v1 --model fake:obedient --reports-dir reports-ci
       - name: Self-test (fake:safe)
         run: uv run drum run --target twin --set public_v1 --model fake:safe --reports-dir reports-ci
+      # The stand-in server on 127.0.0.1 through the HTTP target adapter (M2).
+      - name: Self-test, stand-in (fake:obedient)
+        run: >-
+          uv run drum run --target stub --set public_v1 --model fake:obedient
+          --vectors direct,indirect_doc --reports-dir reports-ci
+      - name: Self-test, stand-in (fake:safe)
+        run: >-
+          uv run drum run --target stub --set public_v1 --model fake:safe
+          --vectors direct,indirect_doc --reports-dir reports-ci
 
   audit:
     # Known vulnerabilities in every locked dependency, dev tools included. The tool versions in

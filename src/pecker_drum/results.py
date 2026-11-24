@@ -58,6 +58,11 @@ class AttemptResult(_Frozen):
     usage: Usage = Usage()
     judge: JudgeVerdict | None = None
     """Set only when a judge ran on a success or contained attempt."""
+    unobservable: tuple[str, ...] = ()
+    """Predicate kinds that need a channel the target does not expose (M2, ADR 0009)."""
+    contradictions: tuple[str, ...] = ()
+    """Escaped excerpts: a call the harness denied that the target reports as executed (M2,
+    ADR 0009). Empty in records written before the field existed."""
 
     @classmethod
     def from_grade(
@@ -80,7 +85,16 @@ class AttemptResult(_Frozen):
             tool_calls=tuple(f"{c.name}:{c.status.value}" for c in observation.tool_calls),
             error=escape_excerpt(observation.error) if observation.error else None,
             usage=observation.usage,
+            unobservable=grade.unobservable,
+            contradictions=tuple(escape_excerpt(c) for c in observation.contradictions),
         )
+
+
+class SkippedItem(_Frozen):
+    """An item outside the run's ``--vectors`` filter (M2)."""
+
+    id: str
+    vector: str
 
 
 class RunInfo(_Frozen):
@@ -96,3 +110,7 @@ class RunInfo(_Frozen):
     harness_version: str
     judge: str = ""
     """The judge model (``fake:reported``, ``openrouter:<id>``); empty without a judge."""
+    vectors: tuple[str, ...] = ()
+    """The ``--vectors`` filter, sorted; empty when every vector runs (M2)."""
+    skipped: tuple[SkippedItem, ...] = ()
+    """Items of the set outside the filter, in set order."""

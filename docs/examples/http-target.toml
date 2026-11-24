@@ -1,0 +1,159 @@
+# Example config for an HTTP target (M2, ADR 0009). `drum run --target stub` uses this file with
+# the stand-in server, which speaks exactly this API shape. For your own target, copy it to
+# private/targets/<name>.toml and adapt it. Unknown keys are rejected.
+#
+# A config names environment variables; it never holds a password or token. Variables start with
+# DRUM_ (never DRUM_OPENROUTER_MODEL). Plain http is accepted for localhost, 127.0.0.0/8 and ::1
+# only; anything else needs https.
+#
+# Templates are plain {name} substitution (no expressions); {{ and }} write literal braces. The
+# variables each request may use are listed next to it. Every request can use {run_id}, {tag}
+# (drum-fixture-<run id>), and except the document list and delete, {item_id} and {attempt}.
+# Values in a path are percent-encoded; values in a JSON body are JSON strings.
+
+label = "example-api"                  # names the target's model in report file names
+base_url = "http://127.0.0.1:8080"     # --target stub replaces it with the stand-in's address
+# ca_file = "redteam-ca.pem"           # the only CAs trusted (replaces the system store), next to this file
+
+[timeouts]                             # seconds
+connect = 10
+read = 60                              # the request timeout: longest wait for the next bytes
+attempt = 300                          # planting, indexing and the turns; cleanup runs after it
+
+[limits]                               # left out of the run id, so a stopped run can resume
+requests_per_minute = 6000             # every request counts: logins, polling, deletes
+max_wall_time = 3600                   # seconds for the whole run
+max_attempts = 1000                    # items x repeats; a bigger run is refused before it starts
+max_consecutive_errors = 5             # stop after this many attempts in a row end with an error
+max_response_bytes = 1048576
+max_stream_bytes = 8388608
+max_stream_events = 50000
+
+[auth]
+kind = "oidc_password"
+token_url = "/oauth/token"             # absolute (the issuer's host) or a path below base_url's origin
+client_id = "drum-redteam"
+# client_secret_env = "DRUM_EXAMPLE_CLIENT_SECRET"   # for a confidential client
+scope = "openid"
+refresh_margin = 30                    # refresh this many seconds before a token expires
+
+# One login per item user (item.user.sub). password_env names the variable, never the password.
+[auth.users.carol]
+username = "carol"
+password_env = "DRUM_EXAMPLE_PASSWORD_CAROL"
+
+[auth.users.dana]
+username = "dana"
+password_env = "DRUM_EXAMPLE_PASSWORD_DANA"
+
+[auth.users.erin]
+username = "erin"
+password_env = "DRUM_EXAMPLE_PASSWORD_ERIN"
+
+# -- chat ----------------------------------------------------------------------------------------
+
+[chat.create]                          # variables: run_id, tag, item_id, attempt
+method = "POST"
+path = "/api/conversations"
+body = { model = "stand-in-1", title = "{tag} {item_id} #{attempt}" }
+id = "id"                              # dotted path of the new conversation id in the response
+
+[chat.send]                            # + conversation_id, message; the response is the event stream
+method = "POST"
+path = "/api/conversations/{conversation_id}/messages"
+body = { model = "stand-in-1", content = "{message}" }
+
+[chat.delete]                          # + conversation_id
+method = "DELETE"
+path = "/api/conversations/{conversation_id}"
+
+# -- events: SSE event name (match = "event") or a type field in the JSON data (match = "field") --
+
+[events]
+match = "event"
+
+[events.answer]
+names = ["token"]
+text = "delta"
+
+[events.sources]
+names = ["sources"]
+items = "documents"                    # a list; without `items` the event data is one source
+id = "id"
+text = "text"
+
+[events.tool_call]
+names = ["tool_call"]
+id = "id"
+name = "name"
+arguments = "arguments"                # an object or a string holding JSON
+
+[events.tool_result]
+names = ["tool_result"]
+tool_call_id = "tool_call_id"
+status = "status"
+executed = ["ok"]                      # only these count for tool_executed
+rejected = ["rejected"]                # an approval denied the call
+refused = ["forbidden"]                # the target's own permission check stopped it
+# any other status (for example "error" or "timeout") is a failed call: the model made it, so it
+# counts for tool_proposed (contained), and the evidence keeps the target's raw status
+
+[events.approval]
+names = ["approval_required"]
+id = "approval_id"
+tool_call_id = "tool_call_id"
+tool = "tool"
+
+[events.error]
+names = ["error"]
+message = "message"
+
+[events.done]                          # a marker: the stream is still read until the server closes it
+names = ["done"]                       # (at most timeouts.read longer)
+
+# -- approvals: each is denied after its stream closed; the deny response continues the turn ----
+
+[approvals]
+gated_tools = ["repo_create_issue", "kb_ingest_url"]   # only for the self-test's expectation
+
+[approvals.deny]                       # + conversation_id, approval_id, tool_call_id, tool
+method = "POST"
+path = "/api/approvals/{approval_id}/decision"
+body = { decision = "reject", note = "denied by pecker-drum" }
+
+# -- fixtures: documents planted per attempt and deleted afterwards ------------------------------
+
+[fixtures]
+# user = "dana"                        # upload, poll and delete as this login (a key of [auth.users]),
+                                       # for example an editor while a viewer asks; default: item.user
+
+[fixtures.upload]                      # multipart; + filename, title
+method = "POST"
+path = "/api/documents"
+file_field = "file"
+id = "id"                              # without it the document is found in the list by file name
+form = [
+  { name = "collection", value = "red-team" },
+  { name = "tags", value = "drum" },
+  { name = "tags", value = "{tag}" },  # a field may repeat
+]
+
+[fixtures.status]                      # the list endpoint: polling and leftover checks (one page)
+method = "GET"
+path = "/api/documents"
+items = "documents"
+id = "id"
+status = "status"
+tag_field = "filename"                 # the field that carries drum-fixture-<run id>
+ready = ["ready"]
+failed = ["failed"]
+interval = 0.05
+timeout = 60
+
+[fixtures.delete]                      # + document_id
+method = "DELETE"
+path = "/api/documents/{document_id}"
+
+[grading]
+# allowed_hosts = ["app.example"]      # hosts links and images may point to; default: base_url's host
+# canaries = [{ value = "CANARY-0123456789ab", source = "system" }]   # canaries the target holds

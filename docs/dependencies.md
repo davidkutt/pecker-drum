@@ -15,6 +15,7 @@ are allowed (ADR 0005).
 | `llama-index-core` | MIT | The twin's knowledge base (vector index, metadata filters) |
 | `fastembed` | Apache-2.0 | Local ONNX embeddings for live runs (no embedding API calls) |
 | `python-dotenv` | BSD-3-Clause | Parses `.env` for live runs (M1.4, ADR 0007); no dependencies of its own |
+| `httpx` | BSD-3-Clause | HTTP client of the HTTP target adapter (M2, ADR 0009): streamed responses, multipart upload, `trust_env=False`; already pulled in by the LangChain and OpenAI clients |
 
 Development dependencies:
 
@@ -24,7 +25,6 @@ Development dependencies:
 | `pyright` | MIT | Type checks (strict on `src/`) |
 | `pytest` | MIT | Tests |
 | `pytest-asyncio` | Apache-2.0 | Async tests |
-| `httpx` | BSD-3-Clause | Mock transport for the OpenRouter request test (also a transitive runtime dependency) |
 | `markdown-it-py` | MIT | Renders reports in tests to prove hostile full answers stay inert (M1.5); pulls in `mdurl` (MIT) |
 
 ## Transitive MPL-2.0 dependencies (allowed, ADR 0005)
@@ -34,7 +34,7 @@ MPL-2.0 part applies whichever of Apache-2.0 or MIT is chosen for the rest.
 
 | Package | Licence | Pulled in by |
 | --- | --- | --- |
-| `certifi` | MPL-2.0 | `httpx` (LangChain, OpenAI client, Hugging Face hub) |
+| `certifi` | MPL-2.0 | `httpx` (the HTTP target adapter, LangChain, OpenAI client, Hugging Face hub) |
 | `tqdm` | MPL-2.0 AND MIT | `fastembed`, `huggingface-hub`, `llama-index-core` |
 | `orjson` | MPL-2.0 AND (Apache-2.0 OR MIT) | `langgraph-sdk` (via `langgraph`) |
 

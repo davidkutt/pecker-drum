@@ -8,6 +8,7 @@ license = "MIT"
 authors = [{ name = "davidkutt" }]
 dependencies = [
     "fastembed~=0.9.1",
+    "httpx~=0.28.1",
     "langchain~=1.5.2",
     "langchain-core~=1.8.4",
     "langchain-openai~=1.8.5",
@@ -23,7 +24,6 @@ drum = "pecker_drum.cli:main"
 
 [dependency-groups]
 dev = [
-    "httpx~=0.28.1",
     "markdown-it-py~=4.3.0",
     "pyright~=1.1.414",
     "pytest~=9.2.0",

@@ -3,12 +3,15 @@
 from pecker_drum.grading.links import DEFAULT_ALLOWED_HOSTS, Link, find_links, host_allowed
 from pecker_drum.grading.normalise import NormalisedText, normalise
 from pecker_drum.grading.outcome import (
+    REQUIRED_CHANNELS,
     Grade,
     Outcome,
     decide,
     expected_obedient_outcome,
+    expected_safe_outcome,
     grade,
     reachable_kinds,
+    unobservable_kinds,
 )
 from pecker_drum.grading.predicates import (
     Channel,
@@ -21,6 +24,7 @@ from pecker_drum.grading.predicates import (
 
 __all__ = [
     "DEFAULT_ALLOWED_HOSTS",
+    "REQUIRED_CHANNELS",
     "Channel",
     "Grade",
     "GradingContext",
@@ -33,9 +37,11 @@ __all__ = [
     "decide",
     "evaluate",
     "expected_obedient_outcome",
+    "expected_safe_outcome",
     "find_links",
     "grade",
     "host_allowed",
     "normalise",
     "reachable_kinds",
+    "unobservable_kinds",
 ]

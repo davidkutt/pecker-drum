@@ -2,18 +2,24 @@
 
 ``load -> fan-out (Send per item x repeat) -> attempt (run + grade) -> aggregate -> report``.
 An interrupted run resumes from the checkpoint: attempts that finished are not repeated.
+
+Safety caps (M2): a maximum wall time and a maximum number of attempts in a row that end with an
+error stop the run with ``RunAborted``; the checkpoint keeps every finished attempt, so the same
+command resumes. A ``RunLifecycle`` (the HTTP target) is told when a run begins and ends, also
+when it is interrupted, and can stop the run between attempts.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import operator
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Annotated, Any, TypedDict, cast
+from typing import Annotated, Any, Protocol, TypedDict, cast
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.constants import END, START
@@ -28,8 +34,28 @@ from pecker_drum.items.schema import Item
 from pecker_drum.judge import Judge, judge_result
 from pecker_drum.observation import Observation
 from pecker_drum.report.render import Report, SelfTestRow, build_report, write_report
-from pecker_drum.results import AttemptResult, RunInfo
+from pecker_drum.results import AttemptResult, RunInfo, SkippedItem
 from pecker_drum.targets.base import Target
+
+
+class RunAborted(RuntimeError):
+    """A safety cap or the target stopped the run. Finished attempts stay in the checkpoint."""
+
+
+class RunLifecycle(Protocol):
+    """Hooks for targets that keep state outside the harness (planted documents, M2)."""
+
+    async def begin_run(self, run_id: str) -> None:
+        """Before the first attempt. May raise to refuse the run."""
+        ...
+
+    async def end_run(self, run_id: str) -> None:
+        """After the last attempt, also after an error, an abort or Ctrl-C. Must not raise."""
+        ...
+
+    def abort_reason(self) -> str | None:
+        """Checked after every attempt: a reason stops the run (``RunAborted``)."""
+        ...
 
 
 class RunState(TypedDict, total=False):
@@ -62,6 +88,13 @@ class CampaignConfig:
     self_test: SelfTestCheck | None = None
     judge: Judge | None = None
     """Advisory judge for success and contained attempts (ADR 0008); never changes an outcome."""
+    vectors: frozenset[str] | None = None
+    """Run only items with these vectors (``--vectors``); ``None`` runs every item."""
+    max_wall_time_s: float | None = None
+    """Stop the run (``RunAborted``) once it has run this long."""
+    max_consecutive_errors: int | None = None
+    """Stop the run once this many attempts in a row ended with an error."""
+    lifecycle: RunLifecycle | None = None
 
     def checkpoints(self) -> Path:
         return self.checkpoint_dir or self.reports_dir / ".checkpoints"
@@ -83,9 +116,31 @@ def _remove_checkpoint(db_path: Path) -> None:
         db_path.with_name(db_path.name + suffix).unlink(missing_ok=True)
 
 
-def run_id_for(target: Target, item_set: ItemSet, repeats: int, judge: str = "") -> str:
-    """A hash of everything that shapes the attempts. The judge counts only when set, so run ids
-    without a judge stay what they were before M1.5; with one, a resume keeps its labels."""
+def in_scope(items: Sequence[Item], vectors: Collection[str] | None) -> tuple[Item, ...]:
+    """The items a ``--vectors`` filter keeps (all of them without a filter)."""
+    return tuple(items) if vectors is None else tuple(i for i in items if i.vector in vectors)
+
+
+def skipped_items(
+    items: Sequence[Item], vectors: Collection[str] | None
+) -> tuple[SkippedItem, ...]:
+    if vectors is None:
+        return ()
+    return tuple(
+        SkippedItem(id=i.id, vector=i.vector.value) for i in items if i.vector not in vectors
+    )
+
+
+def run_id_for(
+    target: Target,
+    item_set: ItemSet,
+    repeats: int,
+    judge: str = "",
+    vectors: Collection[str] | None = None,
+) -> str:
+    """A hash of everything that shapes the attempts. The judge and the vector filter count only
+    when set, so run ids without them stay what they were; with a judge, a resume keeps its
+    labels."""
     fields: dict[str, Any] = {
         "target": target.name,
         "settings": target.describe(),
@@ -96,6 +151,8 @@ def run_id_for(target: Target, item_set: ItemSet, repeats: int, judge: str = "")
     }
     if judge:
         fields["judge"] = judge
+    if vectors is not None:
+        fields["vectors"] = sorted(vectors)
     material = json.dumps(fields, sort_keys=True)
     return hashlib.sha256(material.encode()).hexdigest()[:16]
 
@@ -121,10 +178,14 @@ async def _attempt(
 
 def build_graph(target: Target, config: CampaignConfig, info: RunInfo) -> Any:
     """The uncompiled graph (typed ``Any``: LangGraph's generics leak unknown types)."""
+    streak = {"errors": 0}
+    stopped: dict[str, str] = {}
+    """The first abort reason; later attempts see it before they reach the target."""
 
     async def load(state: RunState) -> dict[str, Any]:
         item_set = load_item_set(config.set_path)
-        return {"items": [item.model_dump(mode="json") for item in item_set.items]}
+        items = in_scope(item_set.items, config.vectors)
+        return {"items": [item.model_dump(mode="json") for item in items]}
 
     def fan_out(state: RunState) -> list[Send]:
         return [
@@ -133,9 +194,29 @@ def build_graph(target: Target, config: CampaignConfig, info: RunInfo) -> Any:
             for attempt in range(1, config.repeats + 1)
         ]
 
+    def check_caps(result: AttemptResult) -> None:
+        """Raise ``RunAborted`` after this attempt if a cap is reached. The attempt raising is not
+        saved, so a resumed run repeats it."""
+        limit = config.max_consecutive_errors
+        streak["errors"] = streak["errors"] + 1 if result.error is not None else 0
+        if limit is not None and streak["errors"] >= limit:
+            stopped.setdefault(
+                "reason",
+                f"{limit} attempts in a row ended with an error (last: {result.item_id} "
+                f"#{result.attempt}: {result.error})",
+            )
+        reason = config.lifecycle.abort_reason() if config.lifecycle else None
+        if reason:
+            stopped.setdefault("reason", reason)
+        if stopped:
+            raise RunAborted(stopped["reason"])
+
     async def attempt(payload: AttemptInput) -> dict[str, Any]:
+        if stopped:  # LangGraph may start a queued attempt before the abort propagates
+            raise RunAborted(stopped["reason"])
         item = Item.model_validate(payload["item"])
         result = await _attempt(target, item, payload["attempt"], config.judge)
+        check_caps(result)
         return {"results": [result.model_dump(mode="json")]}
 
     async def report(state: RunState) -> dict[str, Any]:
@@ -164,7 +245,33 @@ def build_graph(target: Target, config: CampaignConfig, info: RunInfo) -> Any:
 async def run_campaign(target: Target, config: CampaignConfig) -> CampaignResult:
     item_set = load_item_set(config.set_path)
     judge_name = config.judge.name if config.judge else ""
-    run_id = run_id_for(target, item_set, config.repeats, judge_name)
+    run_id = run_id_for(target, item_set, config.repeats, judge_name, config.vectors)
+    if config.lifecycle is None:
+        return await _run_graph(target, config, item_set, run_id, judge_name)
+    await config.lifecycle.begin_run(run_id)
+    try:
+        return await _run_graph(target, config, item_set, run_id, judge_name)
+    finally:
+        await config.lifecycle.end_run(run_id)
+
+
+async def _invoke(graph: Any, payload: Any, run_config: Any, limit_s: float | None) -> Any:
+    if limit_s is None:
+        return await graph.ainvoke(payload, run_config, durability="sync")
+    deadline = asyncio.timeout(limit_s)
+    try:
+        async with deadline:
+            return await graph.ainvoke(payload, run_config, durability="sync")
+    except TimeoutError:
+        if deadline.expired():
+            msg = f"the run reached its maximum wall time of {limit_s:g} s"
+            raise RunAborted(msg) from None
+        raise
+
+
+async def _run_graph(
+    target: Target, config: CampaignConfig, item_set: ItemSet, run_id: str, judge_name: str
+) -> CampaignResult:
     checkpoints = config.checkpoints()
     checkpoints.mkdir(parents=True, exist_ok=True)
     db_path = checkpoints / f"{run_id}.sqlite"
@@ -181,6 +288,8 @@ async def run_campaign(target: Target, config: CampaignConfig) -> CampaignResult
         started_at=utc_now(),
         harness_version=__version__,
         judge=judge_name,
+        vectors=tuple(sorted(config.vectors)) if config.vectors is not None else (),
+        skipped=skipped_items(item_set.items, config.vectors),
     )
     run_config: dict[str, Any] = {
         "configurable": {"thread_id": run_id},
@@ -196,9 +305,9 @@ async def run_campaign(target: Target, config: CampaignConfig) -> CampaignResult
             # The snapshot's values already include the writes of finished attempts.
             values = cast("dict[str, Any]", snapshot.values or {})
             already_done = len(values.get("results", []))
-            final = await graph.ainvoke(None, cast("Any", run_config), durability="sync")
+            final = await _invoke(graph, None, run_config, config.max_wall_time_s)
         else:
-            final = await graph.ainvoke({}, cast("Any", run_config), durability="sync")
+            final = await _invoke(graph, {}, run_config, config.max_wall_time_s)
     state = cast("dict[str, Any]", final)
     items = tuple(Item.model_validate(raw) for raw in state.get("items", []))
     results = tuple(AttemptResult.model_validate(raw) for raw in state.get("results", []))
